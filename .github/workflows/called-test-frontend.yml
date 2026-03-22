@@ -1,0 +1,41 @@
+name: Test Frontend
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        type: string
+        default: '20'
+      coverage-threshold:
+        type: number
+        default: 80
+      working-directory:
+        type: string
+        default: '.'
+
+jobs:
+  test-frontend:
+    name: Test frontend (jest/vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+        working-directory: ${{ inputs.working-directory }}
+      - name: Run tests with coverage
+        # Uses npm run test:ci if defined, otherwise npm run test:run, otherwise falls back to jest/vitest directly.
+        # Each repo's package.json defines the test runner (jest or vitest) — this workflow is stack-agnostic.
+        run: |
+          if npm run --silent | grep -q "test:ci"; then
+            npm run test:ci
+          elif npm run --silent | grep -q "test:run"; then
+            npm run test:run -- --coverage
+          else
+            npx jest --coverage --coverageThreshold='{"global":{"lines":${{ inputs.coverage-threshold }}}}'
+          fi
+        working-directory: ${{ inputs.working-directory }}

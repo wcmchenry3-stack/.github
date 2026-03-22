@@ -1,0 +1,38 @@
+name: Lint Frontend
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        type: string
+        default: '20'
+      working-directory:
+        type: string
+        default: '.'
+      run-a11y:
+        description: 'Set true to enforce eslint-plugin-jsx-a11y (must be in repo devDependencies)'
+        type: boolean
+        default: false
+
+jobs:
+  lint-frontend:
+    name: Lint frontend (eslint + prettier)
+    runs-on: ubuntu-latest
+    env:
+      RUN_A11Y: ${{ inputs.run-a11y }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+        working-directory: ${{ inputs.working-directory }}
+      - name: ESLint
+        run: npx eslint .
+        working-directory: ${{ inputs.working-directory }}
+      - name: Prettier
+        run: npx prettier --check .
+        working-directory: ${{ inputs.working-directory }}

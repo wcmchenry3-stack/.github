@@ -1,0 +1,29 @@
+name: Lint Python
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        type: string
+        default: '3.11'
+      working-directory:
+        type: string
+        default: '.'
+
+jobs:
+  lint-python:
+    name: Lint Python (black + ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+      - name: Install linters
+        run: pip install black ruff
+      - name: black
+        run: black --check .
+        working-directory: ${{ inputs.working-directory }}
+      - name: ruff
+        run: ruff check .
+        working-directory: ${{ inputs.working-directory }}

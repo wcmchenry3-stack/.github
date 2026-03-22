@@ -1,0 +1,42 @@
+name: Test Python
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        type: string
+        default: '3.11'
+      coverage-threshold:
+        type: number
+        default: 80
+      working-directory:
+        type: string
+        default: '.'
+    secrets:
+      DATABASE_URL:
+        required: false
+      JWT_PRIVATE_KEY:
+        required: false
+      JWT_PUBLIC_KEY:
+        required: false
+
+jobs:
+  test-python:
+    name: Test Python (pytest)
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      JWT_PRIVATE_KEY: ${{ secrets.JWT_PRIVATE_KEY }}
+      JWT_PUBLIC_KEY: ${{ secrets.JWT_PUBLIC_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest pytest-cov
+        working-directory: ${{ inputs.working-directory }}
+      - name: Run tests
+        run: pytest --cov=. --cov-fail-under=${{ inputs.coverage-threshold }} --tb=short
+        working-directory: ${{ inputs.working-directory }}

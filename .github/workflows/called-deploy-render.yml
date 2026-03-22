@@ -1,0 +1,38 @@
+name: Deploy to Render
+
+on:
+  workflow_call:
+    inputs:
+      service-name:
+        description: 'Human-readable service name used in artifact naming'
+        type: string
+        required: true
+      zap-target-url:
+        description: 'Live URL to run ZAP baseline scan against after deploy'
+        type: string
+        required: true
+    secrets:
+      RENDER_DEPLOY_HOOK_URL:
+        required: true
+
+jobs:
+  deploy:
+    name: Deploy (${{ inputs.service-name }})
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Render deploy
+        run: curl -s -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}"
+
+      - name: Wait for deploy to stabilise
+        # Render deploy hooks are fire-and-forget — no status callback available.
+        # 60s is sufficient for most Render services on paid plans; increase for free tier cold starts.
+        run: sleep 60
+
+      - name: OWASP ZAP baseline scan
+        uses: zaproxy/action-baseline@v0.12.0
+        with:
+          target: ${{ inputs.zap-target-url }}
+          # fail_action: false — ZAP findings are reported as artifacts but do not roll back the deploy.
+          # Use ZAP output as a signal; treat regressions manually.
+          fail_action: false
+          artifact_name: zap-post-deploy-${{ inputs.service-name }}-${{ github.run_id }}

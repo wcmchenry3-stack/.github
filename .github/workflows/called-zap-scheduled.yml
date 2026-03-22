@@ -1,0 +1,35 @@
+name: ZAP Scheduled Scan
+
+on:
+  workflow_call:
+    inputs:
+      target-url:
+        description: 'URL to scan'
+        type: string
+        required: true
+      artifact-name:
+        description: 'Name for the uploaded ZAP report artifact'
+        type: string
+        required: true
+
+jobs:
+  zap-scan:
+    name: ZAP baseline scan
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run ZAP baseline scan
+        uses: zaproxy/action-baseline@v0.12.0
+        with:
+          target: ${{ inputs.target-url }}
+          fail_action: false
+      - name: Upload ZAP report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ${{ inputs.artifact-name }}-${{ github.run_id }}
+          path: report_html.html
+          retention-days: 30
