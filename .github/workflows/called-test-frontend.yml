@@ -29,11 +29,14 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
       - name: Run tests with coverage
         # Uses npm run test:ci if defined, otherwise npm run test:run, otherwise falls back to jest/vitest directly.
+        # Uses `npm run 2>/dev/null` (not --silent) because npm 7+ suppresses the script
+        # list with --silent, causing all greps to fail and the workflow to fall through
+        # to the jest fallback even on vitest projects.
         # Each repo's package.json defines the test runner (jest or vitest) — this workflow is stack-agnostic.
         run: |
-          if npm run --silent | grep -q "test:ci"; then
+          if npm run 2>/dev/null | grep -q "test:ci"; then
             npm run test:ci
-          elif npm run --silent | grep -q "test:run"; then
+          elif npm run 2>/dev/null | grep -q "test:run"; then
             npm run test:run -- --coverage
           else
             npx jest --coverage --coverageThreshold='{"global":{"lines":${{ inputs.coverage-threshold }}}}'
