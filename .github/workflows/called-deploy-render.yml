@@ -7,12 +7,16 @@ on:
         description: 'Human-readable service name used in artifact naming'
         type: string
         required: true
+      service-id:
+        description: 'Render service ID (srv-...)'
+        type: string
+        required: true
       zap-target-url:
         description: 'Live URL to run ZAP baseline scan against after deploy'
         type: string
         required: true
     secrets:
-      RENDER_DEPLOY_HOOK_URL:
+      RENDER_API_KEY:
         required: true
 
 jobs:
@@ -21,18 +25,47 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Trigger Render deploy
-        run: curl -s -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}"
+        id: trigger
+        run: |
+          response=$(curl -s -w "\n%{http_code}" -X POST \
+            "https://api.render.com/v1/services/${{ inputs.service-id }}/deploys" \
+            -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{"clearCache":"do_not_clear"}')
+          http_code=$(echo "$response" | tail -1)
+          body=$(echo "$response" | head -1)
+          echo "HTTP $http_code"
+          echo "$body"
+          deploy_id=$(echo "$body" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))")
+          echo "deploy_id=$deploy_id" >> $GITHUB_OUTPUT
 
-      - name: Wait for deploy to stabilise
-        # Render deploy hooks are fire-and-forget — no status callback available.
-        # 60s is sufficient for most Render services on paid plans; increase for free tier cold starts.
-        run: sleep 60
+      - name: Wait for deploy to complete
+        run: |
+          deploy_id="${{ steps.trigger.outputs.deploy_id }}"
+          service_id="${{ inputs.service-id }}"
+          echo "Polling deploy $deploy_id ..."
+          for i in $(seq 1 20); do
+            sleep 30
+            status=$(curl -s \
+              "https://api.render.com/v1/services/$service_id/deploys/$deploy_id" \
+              -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+              | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','unknown'))")
+            echo "  [$i] status: $status"
+            if [[ "$status" == "live" ]]; then
+              echo "Deploy complete."
+              exit 0
+            elif [[ "$status" == "deactivated" || "$status" == "build_failed" || "$status" == "update_failed" ]]; then
+              echo "Deploy failed with status: $status"
+              exit 1
+            fi
+          done
+          echo "Timed out waiting for deploy (10 min). Check Render dashboard."
+          exit 1
 
       - name: OWASP ZAP baseline scan
         uses: zaproxy/action-baseline@v0.12.0
         with:
           target: ${{ inputs.zap-target-url }}
-          # fail_action: false — ZAP findings are reported as artifacts but do not roll back the deploy.
-          # Use ZAP output as a signal; treat regressions manually.
+          # fail_action: false — ZAP findings reported as artifacts, do not roll back the deploy
           fail_action: false
           artifact_name: zap-post-deploy-${{ inputs.service-name }}-${{ github.run_id }}
