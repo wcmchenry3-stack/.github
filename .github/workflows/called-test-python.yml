@@ -35,7 +35,12 @@ jobs:
           python-version: ${{ inputs.python-version }}
           cache: pip
       - name: Install dependencies
-        run: pip install -r requirements.txt pytest pytest-cov
+        run: |
+          if [ -f requirements-dev.txt ]; then
+            pip install -r requirements-dev.txt
+          else
+            pip install -r requirements.txt pytest pytest-asyncio pytest-cov
+          fi
         working-directory: ${{ inputs.working-directory }}
       - name: Run tests
         run: pytest --cov=. --cov-fail-under=${{ inputs.coverage-threshold }} --tb=short
