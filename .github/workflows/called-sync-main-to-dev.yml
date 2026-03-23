@@ -1,0 +1,25 @@
+name: Sync main to dev
+
+on:
+  workflow_call:
+
+jobs:
+  sync:
+    name: Open sync PR (main to dev)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Open draft sync PR
+        run: |
+          if gh pr list --base dev --head main --state open --json number --jq '.[0].number' | grep -q '[0-9]'; then
+            echo "Sync PR already open, skipping."
+          else
+            gh pr create \
+              --title "chore: sync dev from main" \
+              --body "Auto-generated sync PR after merge to main." \
+              --base dev \
+              --head main \
+              --draft
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
