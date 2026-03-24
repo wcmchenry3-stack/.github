@@ -9,6 +9,8 @@ All workflows are prefixed `called-` and use `on: workflow_call`. Call them from
 | Workflow | Purpose |
 |----------|---------|
 | `called-secret-scan.yml` | gitleaks full-history secret scan |
+| `called-gate-main-source.yml` | Ensures PRs to main only come from `dev` or `release/*` |
+| `called-sync-main-to-dev.yml` | Auto-syncs main back to dev after merge |
 | `called-lint-python.yml` | black + ruff |
 | `called-lint-frontend.yml` | eslint + prettier (optional a11y flag) |
 | `called-test-python.yml` | pytest + coverage threshold |
@@ -16,6 +18,8 @@ All workflows are prefixed `called-` and use `on: workflow_call`. Call them from
 | `called-build-frontend.yml` | `npm run build` |
 | `called-cve-python.yml` | pip-audit |
 | `called-cve-frontend.yml` | npm audit --audit-level=high |
+| `called-perf-frontend.yml` | Lighthouse CI — audits built dist, uploads results as artifacts (informational) |
+| `called-perf-backend.yml` | Locust load test against a live URL with threshold assertions |
 | `called-deploy-render.yml` | Render deploy hook + ZAP post-deploy scan |
 | `called-zap-scheduled.yml` | ZAP baseline scan (caller owns the schedule) |
 
