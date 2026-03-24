@@ -1,0 +1,89 @@
+name: Perf — Backend (Locust)
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        type: string
+        default: '.'
+      locustfile:
+        type: string
+        default: 'perf/locustfile.py'
+      thresholds-script:
+        type: string
+        default: 'perf/check_thresholds.py'
+      target-url:
+        type: string
+        required: true
+      users:
+        type: number
+        default: 10
+      run-time:
+        type: string
+        default: '60s'
+      spawn-rate:
+        type: number
+        default: 2
+      python-version:
+        type: string
+        default: '3.11'
+      locust-version:
+        type: string
+        default: '2.32.4'
+      # Space-separated user class names to run. Leave empty to run all.
+      user-classes:
+        type: string
+        default: ''
+      csv-prefix:
+        type: string
+        default: 'perf-results'
+      artifact-retention-days:
+        type: number
+        default: 30
+
+jobs:
+  backend-perf:
+    name: Backend load test (Locust)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+          cache: pip
+
+      - name: Install Locust
+        run: pip install locust==${{ inputs.locust-version }}
+
+      - name: Run Locust
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          locust -f ${{ inputs.locustfile }} \
+            --headless \
+            --users ${{ inputs.users }} \
+            --spawn-rate ${{ inputs.spawn-rate }} \
+            --run-time ${{ inputs.run-time }} \
+            --host "${{ inputs.target-url }}" \
+            --csv ${{ inputs.csv-prefix }} \
+            --exit-code-on-error 0 \
+            ${{ inputs.user-classes }}
+
+      - name: Check thresholds
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          if [ -f "${{ inputs.thresholds-script }}" ]; then
+            python ${{ inputs.thresholds-script }} --csv ${{ inputs.csv-prefix }} || \
+              echo "::warning::Performance thresholds were breached. See artifacts for details."
+          else
+            echo "No threshold script found at ${{ inputs.thresholds-script }} — skipping check."
+          fi
+
+      - name: Upload Locust results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: locust-results-${{ github.run_id }}
+          path: ${{ inputs.working-directory }}/${{ inputs.csv-prefix }}*.csv
+          retention-days: ${{ inputs.artifact-retention-days }}

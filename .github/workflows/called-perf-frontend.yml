@@ -1,0 +1,70 @@
+name: Perf — Frontend (Lighthouse CI)
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        type: string
+        default: '.'
+      build-command:
+        type: string
+        default: 'npx expo export --platform web'
+      dist-dir:
+        type: string
+        default: 'dist'
+      lhci-config:
+        type: string
+        default: 'lighthouserc.json'
+      node-version:
+        type: string
+        default: '20'
+      lhci-version:
+        type: string
+        default: '0.14.0'
+      artifact-retention-days:
+        type: number
+        default: 30
+    secrets:
+      # Pass any env vars the build command needs (e.g. EXPO_PUBLIC_API_URL).
+      BUILD_ENV:
+        required: false
+
+jobs:
+  frontend-perf:
+    name: Frontend performance (Lighthouse CI)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ${{ inputs.working-directory }}
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          BUILD_ENV: ${{ secrets.BUILD_ENV }}
+        run: ${{ inputs.build-command }}
+
+      - name: Run Lighthouse CI
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          npx @lhci/cli@${{ inputs.lhci-version }} autorun \
+            --collect.staticDistDir=${{ inputs.dist-dir }} \
+            --config=${{ inputs.lhci-config }}
+        continue-on-error: true
+
+      - name: Upload Lighthouse results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighthouse-results-${{ github.run_id }}
+          path: ${{ inputs.working-directory }}/.lighthouseci/
+          retention-days: ${{ inputs.artifact-retention-days }}
