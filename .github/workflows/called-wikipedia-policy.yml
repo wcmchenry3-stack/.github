@@ -1,0 +1,190 @@
+name: Wikipedia API Policy Check
+
+# Validates that PR code touching the Wikipedia API complies with:
+#   - Wikimedia API etiquette (User-Agent, rate limiting, no scraping)
+#   - Wikimedia Terms of Use (CC BY-SA attribution)
+#
+# Policy references (calibrated against policy-version input):
+#   https://www.mediawiki.org/wiki/API:Etiquette
+#   https://foundation.wikimedia.org/wiki/Policy:Terms_of_Use
+#   https://www.mediawiki.org/wiki/API:REST_API
+
+on:
+  workflow_call:
+    inputs:
+      allowed-repo:
+        required: true
+        type: string
+        description: >
+          Full owner/repo permitted to call this workflow
+          (e.g., wcmchenry3-stack/wiki-app). The job fails
+          immediately if github.repository does not match.
+      policy-version:
+        required: false
+        type: string
+        default: '2025-03-27'
+        description: >
+          ISO date of the Wikimedia policy snapshot this workflow
+          was calibrated against. Surfaced in run logs so drift is
+          visible. Bump after reviewing policy pages post-update.
+
+jobs:
+  wikipedia-policy-check:
+    name: Wikipedia API Policy Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Guard — verify this repo is permitted to use Wikipedia API
+        run: |
+          if [ "${{ github.repository }}" != "${{ inputs.allowed-repo }}" ]; then
+            echo "::error::Wikipedia policy workflow is restricted to: ${{ inputs.allowed-repo }}"
+            echo "::error::Current repo '${{ github.repository }}' is not permitted to call it."
+            echo "::error::Only repos that integrate the Wikimedia API should reference this workflow."
+            exit 1
+          fi
+          echo "Repo guard passed: ${{ github.repository }}"
+          echo "Policy snapshot date: ${{ inputs.policy-version }}"
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Identify changed files that reference Wikipedia
+        id: find-wiki
+        run: |
+          git diff --name-only "origin/${{ github.base_ref }}...HEAD" > changed_files.txt
+
+          echo "All changed files:"
+          cat changed_files.txt
+
+          # Filter to files that actually reference wikipedia.org
+          > wiki_files.txt
+          while IFS= read -r file; do
+            if [ -f "$file" ] && grep -qE "wikipedia\.org" "$file"; then
+              echo "$file" >> wiki_files.txt
+            fi
+          done < changed_files.txt
+
+          if [ ! -s wiki_files.txt ]; then
+            echo "No changed files reference Wikipedia — policy checks skipped."
+            echo "has_wiki_files=false" >> "$GITHUB_OUTPUT"
+          else
+            echo ""
+            echo "Files with Wikipedia references:"
+            cat wiki_files.txt
+            echo "has_wiki_files=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ---------------------------------------------------------------
+      # Check 1: User-Agent header
+      # Wikimedia requires every API request to include a descriptive
+      # User-Agent identifying the application and a contact address.
+      # https://www.mediawiki.org/wiki/API:Etiquette#The_User-Agent_header
+      # ---------------------------------------------------------------
+      - name: 'Check 1: User-Agent header present'
+        if: steps.find-wiki.outputs.has_wiki_files == 'true'
+        run: |
+          FAIL=0
+          while IFS= read -r file; do
+            if ! grep -qiE "(User-Agent|user_agent|userAgent)" "$file"; then
+              echo "::error file=$file::Missing User-Agent header. Wikimedia policy requires every API request to include a descriptive User-Agent (app name + contact). See: https://www.mediawiki.org/wiki/API:Etiquette#The_User-Agent_header"
+              FAIL=1
+            fi
+          done < wiki_files.txt
+          if [ "$FAIL" -eq 0 ]; then
+            echo "Check 1 passed: User-Agent header found in all Wikipedia-touching files."
+          fi
+          exit "$FAIL"
+
+      # ---------------------------------------------------------------
+      # Check 2: Rate limiting present
+      # Wikimedia requires polite request rates. Unbounded loops against
+      # the API violate etiquette and risk IP blocks.
+      # https://www.mediawiki.org/wiki/API:Etiquette#Request_limit
+      # ---------------------------------------------------------------
+      - name: 'Check 2: Rate limiting present'
+        if: steps.find-wiki.outputs.has_wiki_files == 'true'
+        run: |
+          FAIL=0
+          RATE_PATTERNS="sleep|throttle|ratelimit|rate_limit|RateLimit|backoff|retry|Retry|setTimeout|asyncio\.sleep"
+          while IFS= read -r file; do
+            if ! grep -qE "$RATE_PATTERNS" "$file"; then
+              echo "::error file=$file::No rate-limiting code found. Wikimedia policy requires respectful request pacing (e.g., sleep, backoff, retry logic). See: https://www.mediawiki.org/wiki/API:Etiquette#Request_limit"
+              FAIL=1
+            fi
+          done < wiki_files.txt
+          if [ "$FAIL" -eq 0 ]; then
+            echo "Check 2 passed: Rate-limiting code found in all Wikipedia-touching files."
+          fi
+          exit "$FAIL"
+
+      # ---------------------------------------------------------------
+      # Check 3: Attribution (warning only)
+      # Wikipedia content is CC BY-SA licensed and must be attributed.
+      # Attribution often lives in UI templates or docs rather than in
+      # the API-calling module, so this is a warning — not a hard fail.
+      # https://creativecommons.org/licenses/by-sa/4.0/
+      # ---------------------------------------------------------------
+      - name: 'Check 3: Attribution (warning)'
+        if: steps.find-wiki.outputs.has_wiki_files == 'true'
+        run: |
+          ATTR_PATTERNS="CC BY-SA|attribution|wikimedia|Creative Commons|licensed under"
+          while IFS= read -r file; do
+            if ! grep -qiE "$ATTR_PATTERNS" "$file"; then
+              echo "::warning file=$file::No attribution found in this file. Wikipedia content is CC BY-SA licensed and requires attribution. Verify that attribution exists in your UI/templates. See: https://creativecommons.org/licenses/by-sa/4.0/"
+            fi
+          done < wiki_files.txt
+          echo "Check 3 complete: attribution warnings are informational — verify attribution exists in the UI layer."
+
+      # ---------------------------------------------------------------
+      # Check 4: No raw HTML scraping
+      # Code must use the official Wikimedia REST API (/w/api.php or
+      # api.wikimedia.org), not scrape rendered HTML pages.
+      # https://www.mediawiki.org/wiki/API:Main_page
+      # ---------------------------------------------------------------
+      - name: 'Check 4: No raw HTML scraping'
+        if: steps.find-wiki.outputs.has_wiki_files == 'true'
+        run: |
+          FAIL=0
+          # Detect HTML-scraping libraries in files that also call Wikipedia
+          SCRAPE_LIBS="BeautifulSoup|lxml\.html|from scrapy|import scrapy|html\.parser"
+          # Detect direct requests to the human-readable wiki URL (not the API)
+          WIKI_HTML_URL="requests\.(get|post)\s*\([^)]*wikipedia\.org/wiki/"
+          while IFS= read -r file; do
+            if grep -qE "$SCRAPE_LIBS" "$file"; then
+              echo "::error file=$file::HTML-scraping library detected alongside Wikipedia API calls. Use the official Wikimedia REST API instead of scraping rendered pages. See: https://www.mediawiki.org/wiki/API:Main_page"
+              FAIL=1
+            fi
+            if grep -qP "$WIKI_HTML_URL" "$file" 2>/dev/null || grep -qE "fetch\(['\"]https?://[a-z]+\.wikipedia\.org/wiki/" "$file"; then
+              echo "::error file=$file::Direct request to wikipedia.org/wiki/ (human-readable URL) detected. Use /w/api.php or api.wikimedia.org instead. See: https://www.mediawiki.org/wiki/API:Main_page"
+              FAIL=1
+            fi
+          done < wiki_files.txt
+          if [ "$FAIL" -eq 0 ]; then
+            echo "Check 4 passed: No HTML scraping patterns detected."
+          fi
+          exit "$FAIL"
+
+      # ---------------------------------------------------------------
+      # Summary — always runs so policy metadata is visible in every log
+      # ---------------------------------------------------------------
+      - name: Policy summary
+        if: always()
+        run: |
+          echo "========================================"
+          echo "  Wikimedia Policy Compliance Summary"
+          echo "========================================"
+          echo "  Policy snapshot date : ${{ inputs.policy-version }}"
+          echo "  Allowed repo         : ${{ inputs.allowed-repo }}"
+          echo ""
+          echo "  Policy references:"
+          echo "    API Etiquette  : https://www.mediawiki.org/wiki/API:Etiquette"
+          echo "    Terms of Use   : https://foundation.wikimedia.org/wiki/Policy:Terms_of_Use"
+          echo "    REST API docs  : https://www.mediawiki.org/wiki/API:REST_API"
+          echo ""
+          echo "  To update after a Wikimedia policy change:"
+          echo "    1. Review the policy pages above for new requirements"
+          echo "    2. Update grep patterns in called-wikipedia-policy.yml if needed"
+          echo "    3. Bump policy-version default to today's date"
+          echo "    4. Open a PR to wcmchenry3-stack/.github"
+          echo "========================================"
