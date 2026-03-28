@@ -8,22 +8,12 @@ name: OpenAI API Policy Check
 #   https://openai.com/policies/usage-policies
 #   https://openai.com/policies/terms-of-use
 #
-# Guard: restricted to repos listed in the allowed-repos input.
-# To add a new repo, append it (comma-separated) to allowed-repos
-# in the caller workflow — no changes needed here.
+# Applied to all repos. Checks are skipped automatically when no
+# changed files reference the OpenAI API.
 
 on:
   workflow_call:
     inputs:
-      allowed-repos:
-        required: true
-        type: string
-        description: >
-          Comma-separated list of owner/repo values permitted to call
-          this workflow (e.g., wcmchenry3-stack/office_holder_cursor,
-          wcmchenry3-stack/book_app). The job fails immediately if
-          github.repository is not in this list.
-          To add a repo: append ,owner/new-repo to this input in the caller.
       policy-version:
         required: false
         type: string
@@ -39,20 +29,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Guard — verify this repo is permitted to use OpenAI API
-        run: |
-          ALLOWED="${{ inputs.allowed-repos }}"
-          CURRENT="${{ github.repository }}"
-
-          if ! echo "$ALLOWED" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -qxF "$CURRENT"; then
-            echo "::error::OpenAI policy workflow is restricted to: $ALLOWED"
-            echo "::error::Current repo '$CURRENT' is not in the permitted list."
-            echo "::error::To add this repo, append it to allowed-repos in the caller workflow."
-            exit 1
-          fi
-          echo "Repo guard passed: $CURRENT"
-          echo "Policy snapshot date: ${{ inputs.policy-version }}"
-
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -187,16 +163,13 @@ jobs:
           echo "  OpenAI API Policy Compliance Summary"
           echo "========================================"
           echo "  Policy snapshot date : ${{ inputs.policy-version }}"
-          echo "  Permitted repos      : ${{ inputs.allowed-repos }}"
+          echo "  Repo                 : ${{ github.repository }}"
           echo ""
           echo "  Policy references:"
           echo "    Usage Policies : https://openai.com/policies/usage-policies"
           echo "    Terms of Use   : https://openai.com/policies/terms-of-use"
           echo "    Rate Limits    : https://platform.openai.com/docs/guides/rate-limits"
           echo "    Models         : https://platform.openai.com/docs/models"
-          echo ""
-          echo "  To add a new permitted repo:"
-          echo "    Append ,owner/repo to allowed-repos in your caller workflow."
           echo ""
           echo "  To update after an OpenAI policy change:"
           echo "    1. Review the policy pages above for new requirements"
