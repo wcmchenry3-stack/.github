@@ -52,7 +52,14 @@ jobs:
       - name: Identify changed files that reference Wikipedia
         id: find-wiki
         run: |
-          git diff --name-only "origin/${{ github.base_ref }}...HEAD" > changed_files.txt
+          # github.base_ref is set on pull_request events; empty on push events.
+          # Fall back to HEAD~1 on push so the diff still reflects what was just committed.
+          BASE_REF="${{ github.base_ref }}"
+          if [ -n "$BASE_REF" ]; then
+            git diff --name-only "origin/${BASE_REF}...HEAD" > changed_files.txt
+          else
+            git diff --name-only HEAD~1 HEAD > changed_files.txt 2>/dev/null || touch changed_files.txt
+          fi
 
           echo "All changed files:"
           cat changed_files.txt
