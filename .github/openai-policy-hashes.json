@@ -1,0 +1,14 @@
+{
+  "last_checked": "2025-03-27",
+  "note": "SHA-256 of stripped text content. 'uninitialized' triggers first-run issue and populates real hashes.",
+  "pages": {
+    "usage-policies": {
+      "url": "https://openai.com/policies/usage-policies",
+      "sha256": "uninitialized"
+    },
+    "terms-of-use": {
+      "url": "https://openai.com/policies/terms-of-use",
+      "sha256": "uninitialized"
+    }
+  }
+}
