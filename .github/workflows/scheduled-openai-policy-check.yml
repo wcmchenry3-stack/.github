@@ -37,42 +37,15 @@ jobs:
             # Fetch the page (follow redirects, fail on HTTP errors)
             curl -sfL --max-time 30 "$url" > /tmp/raw_page.html
 
-            # Strip HTML to plain text using Python's built-in html.parser.
-            # We extract only <main> or <article> content when available to
-            # reduce noise from navigation and footer changes.
-            python3 - <<'PYEOF' > "$outfile"
-import sys
-from html.parser import HTMLParser
-
-class TextExtractor(HTMLParser):
-    SKIP_TAGS = {'script', 'style', 'nav', 'footer', 'header', 'noscript'}
-
-    def __init__(self):
-        super().__init__()
-        self.text = []
-        self._skip_depth = 0
-
-    def handle_starttag(self, tag, attrs):
-        if tag in self.SKIP_TAGS:
-            self._skip_depth += 1
-
-    def handle_endtag(self, tag):
-        if tag in self.SKIP_TAGS and self._skip_depth > 0:
-            self._skip_depth -= 1
-
-    def handle_data(self, data):
-        if self._skip_depth == 0:
-            stripped = data.strip()
-            if stripped:
-                self.text.append(stripped)
-
-with open('/tmp/raw_page.html', 'r', encoding='utf-8', errors='replace') as f:
-    html = f.read()
-
-parser = TextExtractor()
-parser.feed(html)
-print(' '.join(parser.text))
-PYEOF
+            # Strip HTML to plain text — removes script/style blocks first,
+            # then strips all remaining tags and collapses whitespace.
+            # sed is used instead of a heredoc to stay valid inside YAML block scalars.
+            sed -E '/<(script|style|noscript|nav|footer|header)[^>]*>/,/<\/(script|style|noscript|nav|footer|header)>/d' /tmp/raw_page.html \
+              | sed 's/<[^>]*>//g' \
+              | grep -v '^\s*$' \
+              | tr -s ' \t' ' ' \
+              | sed 's/^ //;s/ $//' \
+              > "$outfile"
           }
 
           fetch_and_hash "https://openai.com/policies/usage-policies" /tmp/usage_policies.txt
@@ -155,32 +128,27 @@ PYEOF
             TITLE="action required: OpenAI policy pages updated — review called-openai-policy.yml"
           fi
 
+          # Build issue body without heredoc (heredoc terminators at col 0 break YAML block scalars)
+          {
+            printf '## OpenAI Policy Change Detected\n\n'
+            printf 'The following policy pages have new content hashes since the last check:\n\n'
+            printf '%s\n\n' "$CHANGES"
+            printf '## Required Actions\n\n'
+            printf '1. Review the linked pages above for any new requirements\n'
+            printf '2. Update grep patterns in `.github/workflows/called-openai-policy.yml` if needed\n'
+            printf '3. Bump the `policy-version` default to today'"'"'s date in that workflow\n'
+            printf '4. Open a PR to this repo and close this issue once merged\n\n'
+            printf '## Policy References\n'
+            printf '- [Usage Policies](https://openai.com/policies/usage-policies)\n'
+            printf '- [Terms of Use](https://openai.com/policies/terms-of-use)\n'
+            printf '- [Rate Limits](https://platform.openai.com/docs/guides/rate-limits)\n'
+            printf '- [Models](https://platform.openai.com/docs/models)\n\n'
+            printf '---\n*Auto-opened by [scheduled-openai-policy-check](../../actions/workflows/scheduled-openai-policy-check.yml)*\n'
+          } > /tmp/issue_body.md
+
           gh issue create \
             --title "$TITLE" \
-            --body "$(cat <<EOF
-## OpenAI Policy Change Detected
-
-The following policy pages have new content hashes since the last check:
-
-$CHANGES
-
-## Required Actions
-
-1. Review the linked pages above for any new requirements
-2. Update grep patterns in \`.github/workflows/called-openai-policy.yml\` if needed
-3. Bump the \`policy-version\` default to today's date in that workflow
-4. Open a PR to this repo and close this issue once merged
-
-## Policy References
-- [Usage Policies](https://openai.com/policies/usage-policies)
-- [Terms of Use](https://openai.com/policies/terms-of-use)
-- [Rate Limits](https://platform.openai.com/docs/guides/rate-limits)
-- [Models](https://platform.openai.com/docs/models)
-
----
-*Auto-opened by [scheduled-openai-policy-check](../../actions/workflows/scheduled-openai-policy-check.yml)*
-EOF
-)"
+            --body-file /tmp/issue_body.md
 
       - name: Summary
         if: always()

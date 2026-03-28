@@ -146,31 +146,26 @@ jobs:
             TITLE="action required: Wikimedia policy pages updated — review called-wikipedia-policy.yml"
           fi
 
+          # Build issue body without heredoc (heredoc terminators at col 0 break YAML block scalars)
+          {
+            printf '## Wikimedia Policy Change Detected\n\n'
+            printf 'The following policy pages have new revision IDs since the last check:\n\n'
+            printf '%s\n\n' "$CHANGES"
+            printf '## Required Actions\n\n'
+            printf '1. Review the diff links above for any new requirements\n'
+            printf '2. Update grep patterns in `.github/workflows/called-wikipedia-policy.yml` if needed\n'
+            printf '3. Bump the `policy-version` default to today'"'"'s date in that workflow\n'
+            printf '4. Open a PR to this repo and close this issue once merged\n\n'
+            printf '## Policy References\n'
+            printf '- [API:Etiquette](https://www.mediawiki.org/wiki/API:Etiquette)\n'
+            printf '- [Terms of Use](https://foundation.wikimedia.org/wiki/Policy:Terms_of_Use)\n'
+            printf '- [REST API](https://www.mediawiki.org/wiki/API:REST_API)\n\n'
+            printf '---\n*Auto-opened by [scheduled-wikipedia-policy-check](../../actions/workflows/scheduled-wikipedia-policy-check.yml)*\n'
+          } > /tmp/issue_body.md
+
           gh issue create \
             --title "$TITLE" \
-            --body "$(cat <<EOF
-## Wikimedia Policy Change Detected
-
-The following policy pages have new revision IDs since the last check:
-
-$CHANGES
-
-## Required Actions
-
-1. Review the diff links above for any new requirements
-2. Update grep patterns in \`.github/workflows/called-wikipedia-policy.yml\` if needed
-3. Bump the \`policy-version\` default to today's date in that workflow
-4. Open a PR to this repo and close this issue once merged
-
-## Policy References
-- [API:Etiquette](https://www.mediawiki.org/wiki/API:Etiquette)
-- [Terms of Use](https://foundation.wikimedia.org/wiki/Policy:Terms_of_Use)
-- [REST API](https://www.mediawiki.org/wiki/API:REST_API)
-
----
-*Auto-opened by [scheduled-wikipedia-policy-check](../../actions/workflows/scheduled-wikipedia-policy-check.yml)*
-EOF
-)" \
+            --body-file /tmp/issue_body.md
 
       - name: Summary
         if: always()
