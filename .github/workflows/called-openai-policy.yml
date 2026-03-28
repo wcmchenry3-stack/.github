@@ -1,0 +1,206 @@
+name: OpenAI API Policy Check
+
+# Validates that PR code touching the OpenAI API complies with:
+#   - OpenAI Usage Policies (no prohibited use, key hygiene)
+#   - OpenAI Terms of Use (rate limit handling, token caps)
+#
+# Policy references (calibrated against policy-version input):
+#   https://openai.com/policies/usage-policies
+#   https://openai.com/policies/terms-of-use
+#
+# Guard: restricted to repos listed in the allowed-repos input.
+# To add a new repo, append it (comma-separated) to allowed-repos
+# in the caller workflow — no changes needed here.
+
+on:
+  workflow_call:
+    inputs:
+      allowed-repos:
+        required: true
+        type: string
+        description: >
+          Comma-separated list of owner/repo values permitted to call
+          this workflow (e.g., wcmchenry3-stack/office_holder_cursor,
+          wcmchenry3-stack/book_app). The job fails immediately if
+          github.repository is not in this list.
+          To add a repo: append ,owner/new-repo to this input in the caller.
+      policy-version:
+        required: false
+        type: string
+        default: '2025-03-27'
+        description: >
+          ISO date of the OpenAI policy snapshot this workflow was
+          calibrated against. Surfaced in run logs so drift is visible.
+          Bump after reviewing policy pages post-update.
+
+jobs:
+  openai-policy-check:
+    name: OpenAI API Policy Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Guard — verify this repo is permitted to use OpenAI API
+        run: |
+          ALLOWED="${{ inputs.allowed-repos }}"
+          CURRENT="${{ github.repository }}"
+
+          if ! echo "$ALLOWED" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -qxF "$CURRENT"; then
+            echo "::error::OpenAI policy workflow is restricted to: $ALLOWED"
+            echo "::error::Current repo '$CURRENT' is not in the permitted list."
+            echo "::error::To add this repo, append it to allowed-repos in the caller workflow."
+            exit 1
+          fi
+          echo "Repo guard passed: $CURRENT"
+          echo "Policy snapshot date: ${{ inputs.policy-version }}"
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Identify changed files that reference OpenAI
+        id: find-openai
+        run: |
+          git diff --name-only "origin/${{ github.base_ref }}...HEAD" > changed_files.txt
+
+          echo "All changed files:"
+          cat changed_files.txt
+
+          # Filter to files that reference OpenAI API usage
+          > openai_files.txt
+          while IFS= read -r file; do
+            if [ -f "$file" ] && grep -qiE "(from openai|import openai|openai\.com|OpenAI\(|client\.chat\.completions|client\.completions\.create|OPENAI_API_KEY)" "$file"; then
+              echo "$file" >> openai_files.txt
+            fi
+          done < changed_files.txt
+
+          if [ ! -s openai_files.txt ]; then
+            echo "No changed files reference OpenAI — policy checks skipped."
+            echo "has_openai_files=false" >> "$GITHUB_OUTPUT"
+          else
+            echo ""
+            echo "Files with OpenAI references:"
+            cat openai_files.txt
+            echo "has_openai_files=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ---------------------------------------------------------------
+      # Check 1: API key not hardcoded
+      # OpenAI keys must come from environment variables, never from
+      # source. A leaked key = immediate quota abuse and account risk.
+      # https://platform.openai.com/docs/api-reference/authentication
+      # ---------------------------------------------------------------
+      - name: 'Check 1: API key not hardcoded'
+        if: steps.find-openai.outputs.has_openai_files == 'true'
+        run: |
+          FAIL=0
+          # Match literal sk- key patterns (real keys are sk-... or sk-proj-...)
+          KEY_PATTERN='sk-[a-zA-Z0-9\-_]{20,}'
+          # Match string-literal assignments to api_key / OPENAI_API_KEY variables
+          ASSIGN_PATTERN='(api_key|OPENAI_API_KEY)\s*=\s*["'"'"'][^"'"'"'$\{]{10,}'
+          while IFS= read -r file; do
+            if grep -qE "$KEY_PATTERN" "$file"; then
+              echo "::error file=$file::Possible hardcoded OpenAI API key (sk-...) detected. Store keys in environment variables and access via os.environ or process.env. See: https://platform.openai.com/docs/api-reference/authentication"
+              FAIL=1
+            fi
+            if grep -qE "$ASSIGN_PATTERN" "$file"; then
+              echo "::error file=$file::API key appears to be assigned from a string literal. Use an environment variable instead (e.g., api_key=os.environ['OPENAI_API_KEY']). See: https://platform.openai.com/docs/api-reference/authentication"
+              FAIL=1
+            fi
+          done < openai_files.txt
+          if [ "$FAIL" -eq 0 ]; then
+            echo "Check 1 passed: No hardcoded API key patterns detected."
+          fi
+          exit "$FAIL"
+
+      # ---------------------------------------------------------------
+      # Check 2: Rate limit / error handling present
+      # OpenAI enforces per-minute and per-day token limits. Unhandled
+      # 429 RateLimitErrors crash production and block all users.
+      # https://platform.openai.com/docs/guides/rate-limits
+      # ---------------------------------------------------------------
+      - name: 'Check 2: Rate limit / error handling present'
+        if: steps.find-openai.outputs.has_openai_files == 'true'
+        run: |
+          FAIL=0
+          RATE_PATTERNS="429|RateLimitError|rate_limit|retry|backoff|sleep|Retry|exponential|tenacity|httpx\.HTTPStatusError"
+          while IFS= read -r file; do
+            if ! grep -qE "$RATE_PATTERNS" "$file"; then
+              echo "::error file=$file::No rate-limit or retry handling found. OpenAI enforces token-per-minute limits; unhandled RateLimitError (HTTP 429) will crash production. Add retry/backoff logic. See: https://platform.openai.com/docs/guides/rate-limits"
+              FAIL=1
+            fi
+          done < openai_files.txt
+          if [ "$FAIL" -eq 0 ]; then
+            echo "Check 2 passed: Rate-limit handling found in all OpenAI-touching files."
+          fi
+          exit "$FAIL"
+
+      # ---------------------------------------------------------------
+      # Check 3: Model version pinned (warning only)
+      # Unversioned aliases (gpt-4o, gpt-4, o1) are silently updated
+      # by OpenAI — pinning to a dated version (gpt-4o-2024-11-20)
+      # prevents unexpected behavior changes between deploys.
+      # https://platform.openai.com/docs/models
+      # ---------------------------------------------------------------
+      - name: 'Check 3: Model version pinned (warning)'
+        if: steps.find-openai.outputs.has_openai_files == 'true'
+        run: |
+          # Match unversioned aliases: "gpt-4o", "gpt-4", "gpt-3.5-turbo", "o1", "o3", "o4-mini"
+          # A dated version like gpt-4o-2024-11-20 has -20\d\d- after the alias, so exclude those.
+          UNPINNED='["'"'"'](gpt-4o|gpt-4|gpt-3\.5-turbo|o1|o3|o4-mini|gpt-4-turbo)["'"'"']'
+          while IFS= read -r file; do
+            if grep -qE "$UNPINNED" "$file"; then
+              MATCHES=$(grep -nE "$UNPINNED" "$file" | head -5)
+              echo "::warning file=$file::Unversioned model alias detected. OpenAI silently updates these aliases — pin to a dated version (e.g., gpt-4o-2024-11-20) to prevent unexpected behavior changes. Matches: $MATCHES. See: https://platform.openai.com/docs/models"
+            fi
+          done < openai_files.txt
+          echo "Check 3 complete: model version warnings are informational — review pinning before release."
+
+      # ---------------------------------------------------------------
+      # Check 4: Token limit set (max_tokens / max_completion_tokens)
+      # Without a token cap, the API can return very large responses,
+      # exhausting quotas and causing unexpected cost spikes.
+      # https://platform.openai.com/docs/api-reference/chat/create#chat-create-max_completion_tokens
+      # ---------------------------------------------------------------
+      - name: 'Check 4: Token limit set'
+        if: steps.find-openai.outputs.has_openai_files == 'true'
+        run: |
+          FAIL=0
+          TOKEN_PATTERNS="max_tokens|max_completion_tokens"
+          while IFS= read -r file; do
+            if ! grep -qE "$TOKEN_PATTERNS" "$file"; then
+              echo "::error file=$file::No token limit found (max_tokens or max_completion_tokens). Without a cap, large responses can exhaust your quota and cause unexpected cost spikes. See: https://platform.openai.com/docs/api-reference/chat/create#chat-create-max_completion_tokens"
+              FAIL=1
+            fi
+          done < openai_files.txt
+          if [ "$FAIL" -eq 0 ]; then
+            echo "Check 4 passed: Token limit found in all OpenAI-touching files."
+          fi
+          exit "$FAIL"
+
+      # ---------------------------------------------------------------
+      # Summary — always runs so policy metadata is visible in every log
+      # ---------------------------------------------------------------
+      - name: Policy summary
+        if: always()
+        run: |
+          echo "========================================"
+          echo "  OpenAI API Policy Compliance Summary"
+          echo "========================================"
+          echo "  Policy snapshot date : ${{ inputs.policy-version }}"
+          echo "  Permitted repos      : ${{ inputs.allowed-repos }}"
+          echo ""
+          echo "  Policy references:"
+          echo "    Usage Policies : https://openai.com/policies/usage-policies"
+          echo "    Terms of Use   : https://openai.com/policies/terms-of-use"
+          echo "    Rate Limits    : https://platform.openai.com/docs/guides/rate-limits"
+          echo "    Models         : https://platform.openai.com/docs/models"
+          echo ""
+          echo "  To add a new permitted repo:"
+          echo "    Append ,owner/repo to allowed-repos in your caller workflow."
+          echo ""
+          echo "  To update after an OpenAI policy change:"
+          echo "    1. Review the policy pages above for new requirements"
+          echo "    2. Update grep patterns in called-openai-policy.yml if needed"
+          echo "    3. Bump policy-version default to today's date"
+          echo "    4. Open a PR to wcmchenry3-stack/.github"
+          echo "========================================"

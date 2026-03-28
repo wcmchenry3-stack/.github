@@ -23,6 +23,7 @@ All workflows are prefixed `called-` and use `on: workflow_call`. Call them from
 | `called-deploy-render.yml` | Render deploy hook + ZAP post-deploy scan |
 | `called-zap-scheduled.yml` | ZAP baseline scan (caller owns the schedule) |
 | `called-wikipedia-policy.yml` | Wikimedia API compliance check — restricted to `office_holder_cursor` |
+| `called-openai-policy.yml` | OpenAI API compliance check — restricted to permitted repos (comma-separated list) |
 
 ## Caller Pattern
 
@@ -48,11 +49,12 @@ jobs:
 
 Some workflows are repo-scoped and will fail immediately if called from any other repository.
 
-| Workflow | Permitted repo | Reason |
-|----------|---------------|--------|
+| Workflow | Permitted repos | Reason |
+|----------|----------------|--------|
 | `called-wikipedia-policy.yml` | `wcmchenry3-stack/office_holder_cursor` | Only repo using the Wikimedia API |
+| `called-openai-policy.yml` | `wcmchenry3-stack/office_holder_cursor`, `wcmchenry3-stack/book_app` | Repos using the OpenAI API |
 
-**Caller pattern for `office_holder_cursor`:**
+**Caller pattern for `office_holder_cursor` (Wikipedia):**
 
 ```yaml
 jobs:
@@ -62,7 +64,19 @@ jobs:
       allowed-repo: 'wcmchenry3-stack/office_holder_cursor'
 ```
 
-A companion scheduled workflow (`scheduled-wikipedia-policy-check.yml`) runs on the 1st of each month to detect changes to the Wikimedia policy pages and opens a GitHub issue here if any revision IDs change. It can also be triggered manually via `workflow_dispatch`.
+**Caller pattern for OpenAI repos:**
+
+```yaml
+jobs:
+  openai-policy:
+    uses: wcmchenry3-stack/.github/.github/workflows/called-openai-policy.yml@main
+    with:
+      allowed-repos: 'wcmchenry3-stack/office_holder_cursor,wcmchenry3-stack/book_app'
+```
+
+To add a new OpenAI-using repo: append `,wcmchenry3-stack/new-repo` to `allowed-repos` in the caller — no changes needed to the workflow itself.
+
+Companion scheduled workflows run on the 1st of each month to detect policy page changes and open a GitHub issue here if updates are found. Both support `workflow_dispatch` for on-demand checks.
 
 ## Community Files
 
