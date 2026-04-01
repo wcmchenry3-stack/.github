@@ -1,0 +1,52 @@
+name: Backend Health Check
+
+on:
+  workflow_call:
+    inputs:
+      backend-url:
+        description: 'Base URL of the deployed backend (e.g. https://yahtzee-api.onrender.com)'
+        type: string
+        required: true
+      health-path:
+        description: 'Health endpoint path'
+        type: string
+        default: '/health'
+      probe-path:
+        description: 'Secondary endpoint to probe (verifies routing is live)'
+        type: string
+        default: ''
+      probe-expected-status:
+        description: 'Expected HTTP status from probe endpoint (e.g. 400, 401, 404)'
+        type: string
+        default: '400'
+
+jobs:
+  backend-health:
+    name: Backend Health
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check backend health endpoint
+        run: |
+          URL="${{ inputs.backend-url }}${{ inputs.health-path }}"
+          echo "Checking $URL ..."
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$URL")
+          echo "Backend returned: $STATUS"
+          if [ "$STATUS" != "200" ]; then
+            echo "::error::Backend health check failed (HTTP $STATUS)"
+            exit 1
+          fi
+          echo "Backend is healthy"
+
+      - name: Probe secondary endpoint
+        if: inputs.probe-path != ''
+        run: |
+          URL="${{ inputs.backend-url }}${{ inputs.probe-path }}"
+          EXPECTED="${{ inputs.probe-expected-status }}"
+          echo "Probing $URL (expect HTTP $EXPECTED) ..."
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$URL")
+          echo "Probe returned: $STATUS"
+          if [ "$STATUS" != "$EXPECTED" ]; then
+            echo "::error::Probe endpoint returned unexpected status: $STATUS (expected $EXPECTED)"
+            exit 1
+          fi
+          echo "Probe endpoint is live (returned $STATUS as expected)"

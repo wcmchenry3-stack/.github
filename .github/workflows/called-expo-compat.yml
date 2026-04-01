@@ -1,0 +1,43 @@
+name: Expo Dependency Compatibility
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: 'Directory containing the Expo project (with package.json)'
+        type: string
+        default: '.'
+      node-version:
+        description: 'Node.js version'
+        type: string
+        default: '20'
+
+jobs:
+  expo-compat:
+    name: Expo Compatibility Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: ${{ inputs.working-directory }}
+
+      - name: Check Expo SDK compatibility
+        run: |
+          echo "Checking dependency compatibility with Expo SDK..."
+          npx expo install --check 2>&1 | tee /tmp/expo-check.log
+          EXIT_CODE=${PIPESTATUS[0]}
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo ""
+            echo "::error::Expo dependency compatibility check failed. Run 'npx expo install --fix' locally to resolve."
+            exit 1
+          fi
+          echo "All dependencies are compatible with the installed Expo SDK"
+        working-directory: ${{ inputs.working-directory }}
