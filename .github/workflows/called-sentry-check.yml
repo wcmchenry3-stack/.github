@@ -45,4 +45,4 @@ jobs:
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
           ENVIRONMENT: test
         run: |
-          pytest ${{ inputs.test-class }} -v --tb=short
+          pytest ${{ inputs.test-class }} -v --tb=short --no-cov -o "addopts="
