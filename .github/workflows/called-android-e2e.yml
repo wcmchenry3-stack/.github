@@ -1,0 +1,81 @@
+name: Android Build + E2E
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: 'Directory containing the Expo/RN project (parent of android/)'
+        type: string
+        default: '.'
+      maestro-flow:
+        description: 'Path to Maestro flow YAML (relative to repo root)'
+        type: string
+        required: true
+      node-version:
+        type: string
+        default: '20'
+      java-version:
+        type: string
+        default: '17'
+    secrets:
+      EXPO_PUBLIC_API_URL:
+        required: false
+
+jobs:
+  android-e2e:
+    name: Android Build + E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: ${{ inputs.java-version }}
+          distribution: temurin
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Generate native Android project
+        run: npx expo prebuild --platform android --clean
+        env:
+          EXPO_PUBLIC_API_URL: ${{ secrets.EXPO_PUBLIC_API_URL }}
+
+      - name: Gradle build (debug)
+        run: cd android && ./gradlew assembleDebug --no-daemon
+        env:
+          EXPO_PUBLIC_API_URL: ${{ secrets.EXPO_PUBLIC_API_URL }}
+
+      - name: Install Maestro
+        run: |
+          curl -Ls "https://get.maestro.mobile.dev" | bash
+          echo "$HOME/.maestro/bin" >> $GITHUB_PATH
+        working-directory: .
+
+      - name: Run Android emulator + Maestro
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 33
+          arch: x86_64
+          script: |
+            adb install ${{ inputs.working-directory }}/android/app/build/outputs/apk/debug/app-debug.apk
+            sleep 5
+            maestro test ${{ inputs.maestro-flow }}
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-e2e-failure
+          path: ~/.maestro/tests/
+          retention-days: 7
