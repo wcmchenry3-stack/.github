@@ -1,0 +1,37 @@
+name: Required Environment Variable Validation
+
+on:
+  workflow_call:
+    inputs:
+      required-vars:
+        description: 'Comma-separated list of required env var names (e.g. SENTRY_DSN,EXPO_PUBLIC_API_URL)'
+        type: string
+        required: true
+      context-label:
+        description: 'Human-readable label for error messages (e.g. "backend deploy")'
+        type: string
+        default: 'this workflow'
+
+jobs:
+  env-validation:
+    name: Env Var Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate required environment variables
+        run: |
+          MISSING=""
+          IFS=',' read -ra VARS <<< "${{ inputs.required-vars }}"
+          for var in "${VARS[@]}"; do
+            var=$(echo "$var" | xargs)  # trim whitespace
+            if [ -z "${!var}" ]; then
+              MISSING="$MISSING  - $var\n"
+            fi
+          done
+          if [ -n "$MISSING" ]; then
+            echo "::error::Missing required environment variables for ${{ inputs.context-label }}:"
+            echo -e "$MISSING"
+            echo ""
+            echo "Add these in: repo Settings > Secrets and variables > Actions"
+            exit 1
+          fi
+          echo "All required environment variables are set"
