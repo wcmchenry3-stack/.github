@@ -1,17 +1,16 @@
 {
-  "last_checked": "2025-03-27",
-  "note": "revid 0 means baseline not yet populated. Run scheduled-wikipedia-policy-check workflow to initialize.",
+  "last_checked": "2026-04-01",
   "pages": {
     "API:Etiquette": {
-      "revid": 0,
+      "revid": 8294285,
       "url": "https://www.mediawiki.org/wiki/API:Etiquette"
     },
     "Policy:Terms_of_Use": {
-      "revid": 0,
+      "revid": 554823,
       "url": "https://foundation.wikimedia.org/wiki/Policy:Terms_of_Use"
     },
     "API:REST_API": {
-      "revid": 0,
+      "revid": 8318190,
       "url": "https://www.mediawiki.org/wiki/API:REST_API"
     }
   }
