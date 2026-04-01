@@ -1,0 +1,48 @@
+name: Sentry Integration Check
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: 'Directory containing the Python backend'
+        type: string
+        default: 'backend'
+      python-version:
+        type: string
+        default: '3.11'
+      test-class:
+        description: 'Pytest class or marker to run (e.g. TestSentryUnit)'
+        type: string
+        default: 'tests/test_sentry.py'
+    secrets:
+      SENTRY_DSN:
+        required: true
+
+jobs:
+  sentry-check:
+    name: Sentry Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          if [ -f requirements-dev.txt ]; then
+            pip install -r requirements-dev.txt
+          else
+            pip install -r requirements.txt
+          fi
+
+      - name: Run Sentry tests
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          ENVIRONMENT: test
+        run: |
+          pytest ${{ inputs.test-class }} -v --tb=short
