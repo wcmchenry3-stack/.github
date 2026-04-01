@@ -1,0 +1,78 @@
+name: Local Path Detection
+
+on:
+  workflow_call:
+    inputs:
+      scan-paths:
+        description: 'Space-separated paths to scan for local machine paths (e.g. "ios/ android/")'
+        type: string
+        default: 'ios/'
+      file-patterns:
+        description: 'Grep include patterns (e.g. "*.xcconfig,*.pbxproj")'
+        type: string
+        default: '*.xcconfig,*.pbxproj'
+      extra-patterns:
+        description: 'Additional regex patterns to flag (comma-separated, e.g. "/home/,/opt/local/")'
+        type: string
+        default: ''
+
+jobs:
+  local-path-check:
+    name: Local Path Detection
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan for hardcoded local machine paths
+        run: |
+          FOUND=0
+          SCAN_PATHS="${{ inputs.scan-paths }}"
+
+          # Build grep include flags
+          INCLUDES=""
+          IFS=',' read -ra PATTERNS <<< "${{ inputs.file-patterns }}"
+          for p in "${PATTERNS[@]}"; do
+            p=$(echo "$p" | xargs)
+            INCLUDES="$INCLUDES --include=$p"
+          done
+
+          # Default patterns: /Users/ and /home/ (common local dev paths)
+          SEARCH_PATTERNS="/Users/|/home/"
+
+          # Add extra patterns if provided
+          EXTRA="${{ inputs.extra-patterns }}"
+          if [ -n "$EXTRA" ]; then
+            IFS=',' read -ra EXTRA_PATS <<< "$EXTRA"
+            for ep in "${EXTRA_PATS[@]}"; do
+              ep=$(echo "$ep" | xargs)
+              SEARCH_PATTERNS="$SEARCH_PATTERNS|$ep"
+            done
+          fi
+
+          echo "Scanning: $SCAN_PATHS"
+          echo "Patterns: $SEARCH_PATTERNS"
+          echo "File types: ${{ inputs.file-patterns }}"
+          echo "---"
+
+          for dir in $SCAN_PATHS; do
+            if [ ! -d "$dir" ]; then
+              echo "Skipping $dir (not found)"
+              continue
+            fi
+            MATCHES=$(grep -rn $INCLUDES -E "$SEARCH_PATTERNS" "$dir" 2>/dev/null || true)
+            if [ -n "$MATCHES" ]; then
+              echo "::error::Found hardcoded local paths in $dir:"
+              echo "$MATCHES" | head -20
+              FOUND=1
+            fi
+          done
+
+          if [ "$FOUND" -eq 1 ]; then
+            echo ""
+            echo "Committed files contain paths from a local dev machine."
+            echo "These will break on CI runners and other developers' machines."
+            echo "Fix: regenerate these files on a clean environment or remove local paths."
+            exit 1
+          fi
+
+          echo "No hardcoded local paths found"
