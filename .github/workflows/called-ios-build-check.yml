@@ -1,0 +1,79 @@
+name: iOS Xcode Build Check
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: 'Directory containing the iOS project (parent of ios/)'
+        type: string
+        default: '.'
+      workspace-name:
+        description: 'Xcode workspace name (e.g. GamingApp.xcworkspace)'
+        type: string
+        required: true
+      scheme:
+        description: 'Xcode scheme name (e.g. GamingApp)'
+        type: string
+        required: true
+      node-version:
+        description: 'Node.js version for npm ci'
+        type: string
+        default: '20'
+    secrets:
+      EXPO_PUBLIC_API_URL:
+        required: false
+
+jobs:
+  xcode-build:
+    name: Xcode Build (no signing)
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Install CocoaPods
+        run: |
+          cd ios
+          rm -f Podfile.lock
+          for attempt in 1 2 3; do
+            echo "=== pod install attempt $attempt ==="
+            if pod install; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::pod install failed after 3 attempts"
+              exit 1
+            fi
+            sleep 10
+          done
+
+      - name: Xcode build (no signing, no simulator)
+        run: |
+          xcodebuild build \
+            -workspace ios/${{ inputs.workspace-name }} \
+            -scheme ${{ inputs.scheme }} \
+            -configuration Debug \
+            -destination generic/platform=iOS \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcpretty --color
+        env:
+          EXPO_PUBLIC_API_URL: ${{ secrets.EXPO_PUBLIC_API_URL }}
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcode-build-logs
+          path: ~/Library/Logs/DiagnosticReports/
+          retention-days: 7

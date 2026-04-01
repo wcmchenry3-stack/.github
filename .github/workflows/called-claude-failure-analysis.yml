@@ -1,0 +1,80 @@
+name: Claude Failure Analysis
+
+on:
+  workflow_call:
+    inputs:
+      log-paths:
+        description: 'Space-separated paths to log files to include in analysis'
+        type: string
+        default: ''
+      context:
+        description: 'What was being tested (e.g. "iOS Xcode build", "Sentry integration tests")'
+        type: string
+        required: true
+      max-log-lines:
+        description: 'Maximum number of log lines to send to Claude'
+        type: number
+        default: 200
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: true
+
+jobs:
+  analyze:
+    name: Claude Analysis
+    runs-on: ubuntu-latest
+    if: failure()
+    steps:
+      - name: Collect logs
+        id: logs
+        run: |
+          LOG_CONTENT=""
+          for path in ${{ inputs.log-paths }}; do
+            if [ -f "$path" ]; then
+              LOG_CONTENT="$LOG_CONTENT\n--- $path ---\n$(head -${{ inputs.max-log-lines }} "$path")"
+            fi
+          done
+          if [ -z "$LOG_CONTENT" ]; then
+            LOG_CONTENT="No log files found at specified paths."
+          fi
+          # Write to file to avoid shell escaping issues
+          echo "$LOG_CONTENT" > /tmp/ci-logs.txt
+
+      - name: Analyze with Claude
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "ANTHROPIC_API_KEY not set — skipping Claude analysis"
+            exit 0
+          fi
+
+          LOGS=$(cat /tmp/ci-logs.txt | head -${{ inputs.max-log-lines }})
+          ESCAPED_LOGS=$(echo "$LOGS" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))")
+
+          ANALYSIS=$(curl -s https://api.anthropic.com/v1/messages \
+            -H "x-api-key: $ANTHROPIC_API_KEY" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "content-type: application/json" \
+            -d "{
+              \"model\": \"claude-sonnet-4-5-20241022\",
+              \"max_tokens\": 1024,
+              \"messages\": [{
+                \"role\": \"user\",
+                \"content\": \"A CI job for ${{ inputs.context }} failed. Here are the logs:\\n\\n$ESCAPED_LOGS\\n\\nBriefly explain what went wrong and suggest a fix. Be concise.\"
+              }]
+            }" | python3 -c "import sys,json; print(json.load(sys.stdin).get('content',[{}])[0].get('text','Analysis unavailable'))" 2>/dev/null || echo "Claude API call failed")
+
+          if [ -n "${{ github.event.pull_request.number }}" ]; then
+            gh pr comment "${{ github.event.pull_request.number }}" \
+              --repo "${{ github.repository }}" \
+              --body "## CI Failure Analysis (${{ inputs.context }})
+
+          $ANALYSIS
+
+          ---
+          *Automated analysis by Claude*"
+          else
+            echo "::notice::$ANALYSIS"
+          fi
