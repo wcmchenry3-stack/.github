@@ -1,0 +1,110 @@
+name: iOS Simulator E2E
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: 'Directory containing the Expo/RN project (parent of ios/)'
+        type: string
+        default: '.'
+      workspace-name:
+        description: 'Xcode workspace name (e.g. GamingApp.xcworkspace)'
+        type: string
+        required: true
+      scheme:
+        description: 'Xcode scheme name (e.g. GamingApp)'
+        type: string
+        required: true
+      maestro-flow:
+        description: 'Path to Maestro flow YAML (relative to repo root)'
+        type: string
+        required: true
+      node-version:
+        type: string
+        default: '20'
+    secrets:
+      EXPO_PUBLIC_API_URL:
+        required: false
+
+jobs:
+  ios-e2e:
+    name: iOS Simulator E2E
+    runs-on: macos-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Install Maestro
+        run: |
+          curl -Ls "https://get.maestro.mobile.dev" | bash
+          echo "$HOME/.maestro/bin" >> $GITHUB_PATH
+
+      - name: Install CocoaPods
+        run: |
+          cd ios
+          rm -f Podfile.lock
+          for attempt in 1 2 3; do
+            echo "=== pod install attempt $attempt ==="
+            if pod install; then break; fi
+            [ "$attempt" -eq 3 ] && exit 1
+            sleep 10
+          done
+
+      - name: Build for simulator
+        run: |
+          xcodebuild build \
+            -workspace ios/${{ inputs.workspace-name }} \
+            -scheme ${{ inputs.scheme }} \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'platform=iOS Simulator,name=iPhone 15,OS=latest' \
+            CODE_SIGNING_ALLOWED=NO \
+            CONFIGURATION_BUILD_DIR=$PWD/build/ios \
+            | xcpretty
+        env:
+          EXPO_PUBLIC_API_URL: ${{ secrets.EXPO_PUBLIC_API_URL }}
+
+      - name: Boot simulator
+        run: |
+          UDID=$(xcrun simctl list devices available | grep "iPhone 15" | head -1 | grep -E -o '[0-9A-F-]{36}')
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+
+      - name: Install app on simulator
+        run: |
+          APP_PATH=$(find build/ios -name "*.app" -type d | head -1)
+          UDID=$(xcrun simctl list devices booted | grep -E -o '[0-9A-F-]{36}' | head -1)
+          xcrun simctl install "$UDID" "$APP_PATH"
+
+      - name: Start Metro bundler
+        run: npx expo start --no-dev --minify &
+        env:
+          EXPO_PUBLIC_API_URL: ${{ secrets.EXPO_PUBLIC_API_URL }}
+
+      - name: Wait for Metro
+        run: sleep 15
+
+      - name: Run Maestro E2E
+        run: maestro test ${{ inputs.maestro-flow }}
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-e2e-failure
+          path: |
+            ~/.maestro/tests/
+            maestro-*.png
+          retention-days: 7
