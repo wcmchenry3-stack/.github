@@ -16,7 +16,7 @@ on:
         default: 'tests/test_sentry.py'
     secrets:
       SENTRY_DSN:
-        required: true
+        required: false
 
 jobs:
   sentry-check:
