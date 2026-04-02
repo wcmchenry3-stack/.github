@@ -54,7 +54,7 @@ jobs:
           while IFS= read -r file; do
             # Skip env/dotenv files
             case "$(basename "$file")" in .env|.env.*|*.env) continue ;; esac
-            if [ -f "$file" ] && grep -qiE "(from google import genai|from google\.genai|google-genai|google\.generativeai|generativelanguage\.googleapis|GEMINI_|gemini.*api.*key|generate_content)" "$file"; then
+            if [ -f "$file" ] && grep -qiE "(from google import genai|from google\.genai|google-genai|google\.generativeai|generativelanguage\.googleapis|generate_content|genai\.Client)" "$file"; then
               echo "$file" >> gemini_files.txt
             fi
           done < changed_files.txt
