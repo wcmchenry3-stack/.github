@@ -1,0 +1,18 @@
+{
+  "openai": {
+    "detect": "from openai|import openai|openai\\.com|OpenAI\\(|client\\.chat\\.completions|client\\.completions\\.create|OPENAI_API_KEY",
+    "skip": "^\\.env"
+  },
+  "wikipedia": {
+    "detect": "wikipedia\\.org|mediawiki|wikimedia",
+    "skip": null
+  },
+  "gemini": {
+    "detect": "google\\.generativeai|from google.*generativeai|genai\\.|GenerativeModel|GEMINI_API_KEY|GOOGLE_AI_API_KEY",
+    "skip": "^\\.env"
+  },
+  "claude": {
+    "detect": "from anthropic|import anthropic|@anthropic-ai/sdk|Anthropic\\(|ANTHROPIC_API_KEY|claude_agent_sdk",
+    "skip": "^\\.env"
+  }
+}
