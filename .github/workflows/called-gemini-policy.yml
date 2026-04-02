@@ -1,0 +1,193 @@
+name: Gemini API Policy Check
+
+# Validates that PR code touching the Google Gemini API complies with:
+#   - Gemini API Additional Terms of Service (key hygiene, data handling)
+#   - Gemini API rate limit handling (RESOURCE_EXHAUSTED / HTTP 429)
+#   - Google Generative AI Prohibited Use Policy
+#
+# Policy references (calibrated against policy-version input):
+#   https://ai.google.dev/gemini-api/terms
+#   https://ai.google.dev/gemini-api/docs/rate-limits
+#   https://ai.google.dev/gemini-api/docs/usage-policies
+#   https://policies.google.com/terms/generative-ai/use-policy
+#
+# Applied to all repos. Checks are skipped automatically when no
+# changed files reference the Gemini API.
+
+on:
+  workflow_call:
+    inputs:
+      policy-version:
+        required: false
+        type: string
+        default: '2026-04-01'
+        description: >
+          ISO date of the Gemini policy snapshot this workflow was
+          calibrated against. Surfaced in run logs so drift is visible.
+          Bump after reviewing policy pages post-update.
+
+jobs:
+  gemini-policy-check:
+    name: Gemini API Policy Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Identify changed files that reference Gemini
+        id: find-gemini
+        run: |
+          BASE_REF="${{ github.base_ref }}"
+          if [ -n "$BASE_REF" ]; then
+            git diff --name-only "origin/${BASE_REF}...HEAD" > changed_files.txt
+          else
+            git diff --name-only HEAD~1 HEAD > changed_files.txt 2>/dev/null || touch changed_files.txt
+          fi
+
+          echo "All changed files:"
+          cat changed_files.txt
+
+          # Filter to files that reference Gemini API usage
+          > gemini_files.txt
+          while IFS= read -r file; do
+            # Skip env/dotenv files
+            case "$(basename "$file")" in .env|.env.*|*.env) continue ;; esac
+            if [ -f "$file" ] && grep -qiE "(from google import genai|from google\.genai|google-genai|google\.generativeai|generativelanguage\.googleapis|GEMINI_|gemini.*api.*key|generate_content)" "$file"; then
+              echo "$file" >> gemini_files.txt
+            fi
+          done < changed_files.txt
+
+          if [ ! -s gemini_files.txt ]; then
+            echo "No changed files reference Gemini — policy checks skipped."
+            echo "has_gemini_files=false" >> "$GITHUB_OUTPUT"
+          else
+            echo ""
+            echo "Files with Gemini references:"
+            cat gemini_files.txt
+            echo "has_gemini_files=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ---------------------------------------------------------------
+      # Check 1: API key not hardcoded
+      # Gemini API keys must come from environment variables, never from
+      # source. A leaked key = immediate quota abuse and account risk.
+      # https://ai.google.dev/gemini-api/docs/api-key
+      # ---------------------------------------------------------------
+      - name: 'Check 1: API key not hardcoded'
+        if: steps.find-gemini.outputs.has_gemini_files == 'true'
+        run: |
+          FAIL=0
+          # Match literal Google API key patterns (AIza...)
+          KEY_PATTERN='AIza[a-zA-Z0-9\-_]{30,}'
+          # Match string-literal assignments to api_key / GEMINI_ variables
+          ASSIGN_PATTERN='(api_key|GEMINI_[A-Z_]+)\s*=\s*["'"'"'][^"'"'"'$\{]{10,}'
+          while IFS= read -r file; do
+            if grep -qE "$KEY_PATTERN" "$file"; then
+              echo "::error file=$file::Possible hardcoded Google API key (AIza...) detected. Store keys in environment variables and access via os.environ. See: https://ai.google.dev/gemini-api/docs/api-key"
+              FAIL=1
+            fi
+            if grep -qE "$ASSIGN_PATTERN" "$file"; then
+              echo "::error file=$file::API key appears to be assigned from a string literal. Use an environment variable instead (e.g., api_key=os.environ['GEMINI_OFFICE_HOLDER']). See: https://ai.google.dev/gemini-api/docs/api-key"
+              FAIL=1
+            fi
+          done < gemini_files.txt
+          if [ "$FAIL" -eq 0 ]; then
+            echo "Check 1 passed: No hardcoded API key patterns detected."
+          fi
+          exit "$FAIL"
+
+      # ---------------------------------------------------------------
+      # Check 2: Rate limit / error handling present
+      # Gemini enforces per-project RPM, TPM, and RPD limits.
+      # Unhandled RESOURCE_EXHAUSTED (HTTP 429) errors crash production.
+      # https://ai.google.dev/gemini-api/docs/rate-limits
+      # ---------------------------------------------------------------
+      - name: 'Check 2: Rate limit / error handling present'
+        if: steps.find-gemini.outputs.has_gemini_files == 'true'
+        run: |
+          FAIL=0
+          RATE_PATTERNS="429|RESOURCE_EXHAUSTED|ClientError|rate_limit|retry|backoff|sleep|Retry|exponential|tenacity"
+          while IFS= read -r file; do
+            if ! grep -qE "$RATE_PATTERNS" "$file"; then
+              echo "::error file=$file::No rate-limit or retry handling found. Gemini enforces per-project request limits; unhandled RESOURCE_EXHAUSTED (HTTP 429) will crash production. Add retry/backoff logic. See: https://ai.google.dev/gemini-api/docs/rate-limits"
+              FAIL=1
+            fi
+          done < gemini_files.txt
+          if [ "$FAIL" -eq 0 ]; then
+            echo "Check 2 passed: Rate-limit handling found in all Gemini-touching files."
+          fi
+          exit "$FAIL"
+
+      # ---------------------------------------------------------------
+      # Check 3: Token limit set (max_output_tokens)
+      # Without a token cap, the API can return very large responses,
+      # exhausting quotas and causing unexpected cost spikes.
+      # https://ai.google.dev/gemini-api/docs/text-generation
+      # ---------------------------------------------------------------
+      - name: 'Check 3: Token limit set'
+        if: steps.find-gemini.outputs.has_gemini_files == 'true'
+        run: |
+          FAIL=0
+          TOKEN_PATTERNS="max_output_tokens|maxOutputTokens"
+          while IFS= read -r file; do
+            # Only check files that actually call generate_content
+            if grep -qE "generate_content|generateContent" "$file"; then
+              if ! grep -qE "$TOKEN_PATTERNS" "$file"; then
+                echo "::error file=$file::No token limit found (max_output_tokens). Without a cap, large responses can exhaust your quota and cause unexpected cost spikes. See: https://ai.google.dev/gemini-api/docs/text-generation"
+                FAIL=1
+              fi
+            fi
+          done < gemini_files.txt
+          if [ "$FAIL" -eq 0 ]; then
+            echo "Check 3 passed: Token limit found in all files calling generate_content."
+          fi
+          exit "$FAIL"
+
+      # ---------------------------------------------------------------
+      # Check 4: Deprecated SDK warning
+      # google-generativeai was deprecated Nov 2025 and archived Dec 2025.
+      # Projects should use google-genai (the unified GenAI SDK).
+      # https://github.com/google-gemini/deprecated-generative-ai-python
+      # ---------------------------------------------------------------
+      - name: 'Check 4: Deprecated SDK warning'
+        if: steps.find-gemini.outputs.has_gemini_files == 'true'
+        run: |
+          while IFS= read -r file; do
+            if grep -qE "google[.-]generativeai|from google\.generativeai|import google\.generativeai" "$file"; then
+              echo "::warning file=$file::Deprecated SDK detected (google-generativeai). This package was archived Dec 2025. Migrate to google-genai (import as 'from google import genai'). See: https://github.com/google-gemini/deprecated-generative-ai-python"
+            fi
+          done < gemini_files.txt
+          echo "Check 4 complete: deprecated SDK warnings are informational."
+
+      # ---------------------------------------------------------------
+      # Summary
+      # ---------------------------------------------------------------
+      - name: Policy summary
+        if: always()
+        run: |
+          echo "========================================"
+          echo "  Gemini API Policy Compliance Summary"
+          echo "========================================"
+          echo "  Policy snapshot date : ${{ inputs.policy-version }}"
+          echo "  Repo                 : ${{ github.repository }}"
+          echo ""
+          echo "  Policy references:"
+          echo "    Terms of Service   : https://ai.google.dev/gemini-api/terms"
+          echo "    Rate Limits        : https://ai.google.dev/gemini-api/docs/rate-limits"
+          echo "    Usage Policies     : https://ai.google.dev/gemini-api/docs/usage-policies"
+          echo "    Prohibited Uses    : https://policies.google.com/terms/generative-ai/use-policy"
+          echo ""
+          echo "  Key Gemini-specific notes:"
+          echo "    - Rate limits are per-project (not per-key)"
+          echo "    - Unpaid tier: Google uses prompts/responses for product improvement"
+          echo "    - Google retains prompts+responses for 55 days for abuse monitoring"
+          echo "    - Deprecated SDK (google-generativeai) was archived Dec 2025"
+          echo ""
+          echo "  To update after a Gemini policy change:"
+          echo "    1. Review the policy pages above for new requirements"
+          echo "    2. Update grep patterns in called-gemini-policy.yml if needed"
+          echo "    3. Bump policy-version default to today's date"
+          echo "    4. Open a PR to wcmchenry3-stack/.github"
+          echo "========================================"
