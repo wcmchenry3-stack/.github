@@ -1,0 +1,78 @@
+name: Android Gradle Build Check
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: 'Directory containing the Android project (parent of android/)'
+        type: string
+        default: '.'
+      node-version:
+        description: 'Node.js version for npm ci'
+        type: string
+        default: '22'
+      java-version:
+        description: 'JDK version for Gradle'
+        type: string
+        default: '17'
+    secrets:
+      EXPO_PUBLIC_API_URL:
+        required: false
+
+jobs:
+  gradle-build:
+    name: Gradle Build (Debug)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java-version }}
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Gradle cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/gradle-wrapper.properties', '**/build.gradle', '**/settings.gradle') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: Build Debug APK
+        working-directory: ${{ inputs.working-directory }}/android
+        run: ./gradlew assembleDebug --no-daemon -x lint -PreactNativeArchitectures=x86_64
+        env:
+          EXPO_PUBLIC_API_URL: ${{ secrets.EXPO_PUBLIC_API_URL }}
+
+      - name: Validate APK exists
+        working-directory: ${{ inputs.working-directory }}/android
+        run: |
+          APK_PATH=$(find app/build/outputs/apk/debug -name '*.apk' | head -1)
+          if [ -z "$APK_PATH" ]; then
+            echo "::error::Debug APK was not produced — Gradle build failed silently"
+            exit 1
+          fi
+          APK_SIZE=$(stat --printf="%s" "$APK_PATH")
+          echo "Debug APK built successfully: $APK_PATH (${APK_SIZE} bytes)"
+
+      - name: Upload build reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-build-reports
+          path: ${{ inputs.working-directory }}/android/app/build/reports/
+          retention-days: 7
