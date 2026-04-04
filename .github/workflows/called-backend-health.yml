@@ -19,6 +19,10 @@ on:
         description: 'Expected HTTP status from probe endpoint (e.g. 400, 401, 404)'
         type: string
         default: '400'
+      user-agent:
+        description: 'User-Agent header to send. Default identifies the check so Cloudflare / WAFs can allowlist it; raw curl UA is often blocked.'
+        type: string
+        default: 'github-actions-backend-health-check/1.0'
 
 jobs:
   backend-health:
@@ -29,7 +33,8 @@ jobs:
         run: |
           URL="${{ inputs.backend-url }}${{ inputs.health-path }}"
           echo "Checking $URL ..."
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$URL")
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 \
+            -A "${{ inputs.user-agent }}" "$URL")
           echo "Backend returned: $STATUS"
           if [ "$STATUS" != "200" ]; then
             echo "::error::Backend health check failed (HTTP $STATUS)"
@@ -43,7 +48,8 @@ jobs:
           URL="${{ inputs.backend-url }}${{ inputs.probe-path }}"
           EXPECTED="${{ inputs.probe-expected-status }}"
           echo "Probing $URL (expect HTTP $EXPECTED) ..."
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$URL")
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 \
+            -A "${{ inputs.user-agent }}" "$URL")
           echo "Probe returned: $STATUS"
           if [ "$STATUS" != "$EXPECTED" ]; then
             echo "::error::Probe endpoint returned unexpected status: $STATUS (expected $EXPECTED)"
