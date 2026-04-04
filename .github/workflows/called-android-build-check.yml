@@ -52,6 +52,16 @@ jobs:
           key: gradle-${{ runner.os }}-${{ hashFiles('**/gradle-wrapper.properties', '**/build.gradle', '**/settings.gradle') }}
           restore-keys: gradle-${{ runner.os }}-
 
+      - name: Generate debug keystore for CI
+        working-directory: ${{ inputs.working-directory }}/android/app
+        run: |
+          keytool -genkey -v \
+            -keystore debug.keystore \
+            -alias androiddebugkey \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass android -keypass android \
+            -dname "CN=Android Debug,O=Android,C=US"
+
       - name: Build Debug APK
         working-directory: ${{ inputs.working-directory }}/android
         run: ./gradlew assembleDebug --no-daemon -x lint -PreactNativeArchitectures=x86_64
