@@ -22,7 +22,7 @@ on:
       user-agent:
         description: 'User-Agent header to send. Default identifies the check so Cloudflare / WAFs can allowlist it; raw curl UA is often blocked.'
         type: string
-        default: 'github-actions-backend-health-check/1.0'
+        default: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
 
 jobs:
   backend-health:
