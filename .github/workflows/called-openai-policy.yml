@@ -53,6 +53,8 @@ jobs:
           while IFS= read -r file; do
             # Skip env/dotenv files - they declare variable names, not API logic
             case "$(basename "$file")" in .env|.env.*|*.env) continue ;; esac
+            # Skip .claude/ policy/config files - they name APIs as detection patterns, not callers
+            case "$file" in .claude/*) continue ;; esac
             if [ -f "$file" ] && grep -qiE "(from openai|import openai|openai\.com|OpenAI\(|client\.chat\.completions|client\.completions\.create|OPENAI_API_KEY)" "$file"; then
               echo "$file" >> openai_files.txt
             fi
