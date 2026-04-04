@@ -47,6 +47,23 @@ A `PreToolUse` hook gates every `gh pr create` call behind a policy check.
 
 **Current policies:** OpenAI, Wikipedia/Wikimedia, Google Gemini.
 
+## Org-level policy enforcement (`policy-enforcement.yml`)
+
+`called-openai-policy.yml` and `called-gemini-policy.yml` read
+`.github/policy-enforcement.yml` from this meta-repo at job start to
+decide whether violations **fail the check** or are **advisory only**.
+
+**The model:**
+- Individual repos *inherit* the policy scaffolding (agents, hooks, `.claude/policies/`).
+- The org (this repo) *controls* whether findings block PRs.
+
+Defaults are `advisory` — violations are annotated in the PR UI but do not
+fail the check. Flip a repo's key to `required` in
+`overrides:` once it actually starts calling the API in question.
+
+Wikipedia uses a stricter model (`allowed-repo:` input gate) and is not
+listed in `policy-enforcement.yml`.
+
 ## Conventions
 
 - Workflows are prefixed `called-` and use `workflow_call` triggers.

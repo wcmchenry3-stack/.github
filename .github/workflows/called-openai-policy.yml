@@ -71,6 +71,27 @@ jobs:
           fi
 
       # ---------------------------------------------------------------
+      # Load org-wide enforcement mode for OpenAI policy.
+      # The config lives in .github/policy-enforcement.yml of this repo.
+      # When mode == "required", violations fail the check.
+      # When mode == "advisory" (default), violations are annotated only.
+      # ---------------------------------------------------------------
+      - name: Load enforcement mode
+        id: enforce
+        run: |
+          CONFIG_URL="https://raw.githubusercontent.com/wcmchenry3-stack/.github/main/.github/policy-enforcement.yml"
+          if ! curl -sfL "$CONFIG_URL" -o /tmp/policy-enforcement.yml; then
+            echo "::warning::Could not fetch policy-enforcement.yml — defaulting to advisory"
+            echo "mode=advisory" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          REPO_NAME="${GITHUB_REPOSITORY##*/}"
+          MODE=$(yq ".overrides.\"${REPO_NAME}\".openai // .defaults.openai // \"advisory\"" /tmp/policy-enforcement.yml)
+          if [ -z "$MODE" ] || [ "$MODE" = "null" ]; then MODE="advisory"; fi
+          echo "mode=${MODE}" >> "$GITHUB_OUTPUT"
+          echo "::notice::OpenAI policy enforcement mode for ${REPO_NAME}: ${MODE}"
+
+      # ---------------------------------------------------------------
       # Check 1: API key not hardcoded
       # OpenAI keys must come from environment variables, never from
       # source. A leaked key = immediate quota abuse and account risk.
@@ -96,6 +117,9 @@ jobs:
           done < openai_files.txt
           if [ "$FAIL" -eq 0 ]; then
             echo "Check 1 passed: No hardcoded API key patterns detected."
+          elif [ "${{ steps.enforce.outputs.mode }}" != "required" ]; then
+            echo "::warning::Check 1 found violations but enforcement mode is '${{ steps.enforce.outputs.mode }}' — not failing check."
+            exit 0
           fi
           exit "$FAIL"
 
@@ -118,6 +142,9 @@ jobs:
           done < openai_files.txt
           if [ "$FAIL" -eq 0 ]; then
             echo "Check 2 passed: Rate-limit handling found in all OpenAI-touching files."
+          elif [ "${{ steps.enforce.outputs.mode }}" != "required" ]; then
+            echo "::warning::Check 2 found violations but enforcement mode is '${{ steps.enforce.outputs.mode }}' — not failing check."
+            exit 0
           fi
           exit "$FAIL"
 
@@ -161,6 +188,9 @@ jobs:
           done < openai_files.txt
           if [ "$FAIL" -eq 0 ]; then
             echo "Check 4 passed: Token limit found in all OpenAI-touching files."
+          elif [ "${{ steps.enforce.outputs.mode }}" != "required" ]; then
+            echo "::warning::Check 4 found violations but enforcement mode is '${{ steps.enforce.outputs.mode }}' — not failing check."
+            exit 0
           fi
           exit "$FAIL"
 
@@ -175,6 +205,7 @@ jobs:
           echo "========================================"
           echo "  Policy snapshot date : ${{ inputs.policy-version }}"
           echo "  Repo                 : ${{ github.repository }}"
+          echo "  Enforcement mode     : ${{ steps.enforce.outputs.mode }}"
           echo ""
           echo "  Policy references:"
           echo "    Usage Policies : https://openai.com/policies/usage-policies"

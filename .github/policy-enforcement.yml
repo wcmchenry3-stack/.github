@@ -1,0 +1,27 @@
+# Org-wide enforcement control for API policy workflows.
+#
+# Each called-*-policy.yml workflow reads this file and decides whether
+# findings block the PR (required) or are informational-only (advisory).
+#
+# Violations are ALWAYS annotated in the PR UI as ::error or ::warning.
+# This file only controls whether those findings *fail the check*.
+#
+# Change values here to roll out enforcement across the org without
+# editing each repo individually. Flip a repo to `required` once it
+# actually starts calling the API in question.
+#
+# Scope: applies to policy workflows that run org-wide and rely on
+# grep-based detection (openai, gemini). Wikipedia uses an allowed-repo
+# guard at the workflow level, so it is not listed here.
+
+defaults:
+  openai: advisory
+  gemini: advisory
+
+# Per-repo overrides. Uncomment and set to `required` when the repo
+# begins calling the API. Repo key is the bare repo name (no owner).
+overrides: {}
+  # book_app:
+  #   openai: required
+  # office_holder_cursor:
+  #   gemini: required
