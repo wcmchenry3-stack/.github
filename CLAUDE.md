@@ -64,6 +64,26 @@ fail the check. Flip a repo's key to `required` in
 Wikipedia uses a stricter model (`allowed-repo:` input gate) and is not
 listed in `policy-enforcement.yml`.
 
+## Policy change monitors
+
+Two mechanisms keep org workflows calibrated against upstream policy changes:
+
+### Wikipedia (`scheduled-wikipedia-policy-monitor.yml`)
+- Runs monthly via cron. Calls the MediaWiki API to fetch current revision IDs
+  for `API:Etiquette`, `API:REST_API`, and `Policy:Terms_of_Use`.
+- Compares against baseline in `.github/wikipedia-policy-revisions.json`.
+- On change: opens a GitHub issue with direct diff links, commits updated baseline.
+- No external credentials — uses `GITHUB_TOKEN` (automatic).
+
+### OpenAI (`cloudflare/openai-policy-worker/`)
+- Cloudflare Email Worker. Receives forwarded OpenAI newsletter emails.
+- Parses subject + body and opens a GitHub issue tagged `policy-update`.
+- Requires one secret: `GITHUB_TOKEN` — a fine-grained PAT with `issues: write`
+  on this repo, stored via `wrangler secret put GITHUB_TOKEN`.
+- Deploy: `cd cloudflare/openai-policy-worker && npm install && npm run deploy`
+- Email routing: Cloudflare dashboard → Email Routing → route
+  `openai-policy@<your-domain>` → Worker `openai-policy-worker`.
+
 ## Conventions
 
 - Workflows are prefixed `called-` and use `workflow_call` triggers.

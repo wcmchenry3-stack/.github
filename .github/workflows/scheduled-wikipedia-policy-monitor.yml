@@ -1,0 +1,165 @@
+name: Wikipedia Policy Revision Monitor
+
+# Polls the MediaWiki API monthly to detect edits to the policy pages that
+# called-wikipedia-policy.yml is calibrated against.
+#
+# Uses revision IDs (not page hashes) so only real content edits trigger an
+# alert — minor formatting-only saves that share a revid are ignored.
+#
+# On change: opens a GitHub issue with direct diff links and commits the
+#   updated revision IDs to .github/wikipedia-policy-revisions.json
+# On no change: logs a clean summary and exits 0
+#
+# Manual trigger: workflow_dispatch (use after known Wikimedia announcements)
+
+on:
+  schedule:
+    - cron: '0 9 1 * *'   # 09:00 UTC on the 1st of every month
+  workflow_dispatch:
+
+permissions:
+  contents: write   # to commit updated revision baseline
+  issues: write     # to open alert issues
+
+jobs:
+  check-revisions:
+    name: Check Wikimedia Policy Revisions
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch current revision IDs via MediaWiki API
+        run: |
+          # Wikimedia requires a descriptive User-Agent: https://www.mediawiki.org/wiki/API:Etiquette
+          UA="wcmchenry3-stack-policy-monitor/1.0 (github.com/wcmchenry3-stack/.github)"
+
+          curl -sf -H "User-Agent: $UA" \
+            "https://www.mediawiki.org/w/api.php?action=query&titles=API:Etiquette%7CAPI:REST_API&prop=revisions&rvprop=ids%7Ctimestamp&format=json" \
+            > /tmp/mw_response.json
+
+          curl -sf -H "User-Agent: $UA" \
+            "https://foundation.wikimedia.org/w/api.php?action=query&titles=Policy:Terms_of_Use&prop=revisions&rvprop=ids%7Ctimestamp&format=json" \
+            > /tmp/fw_response.json
+
+          echo "=== mediawiki.org response ==="
+          jq . /tmp/mw_response.json
+          echo "=== foundation.wikimedia.org response ==="
+          jq . /tmp/fw_response.json
+
+      - name: Compare revisions and detect changes
+        id: compare
+        run: |
+          BASELINE=".github/wikipedia-policy-revisions.json"
+
+          STORED_ETIQUETTE=$(jq -r '.pages["API:Etiquette"].revid'      "$BASELINE")
+          STORED_TOU=$(jq -r       '.pages["Policy:Terms_of_Use"].revid' "$BASELINE")
+          STORED_REST=$(jq -r      '.pages["API:REST_API"].revid'        "$BASELINE")
+
+          echo "Stored  — Etiquette: $STORED_ETIQUETTE | ToU: $STORED_TOU | REST: $STORED_REST"
+
+          # MediaWiki returns pages keyed by numeric pageid; select by title.
+          CURRENT_ETIQUETTE=$(jq -r \
+            '[.query.pages | to_entries[] | select(.value.title == "API:Etiquette") | .value.revisions[0].revid] | first // "0"' \
+            /tmp/mw_response.json)
+
+          CURRENT_REST=$(jq -r \
+            '[.query.pages | to_entries[] | select(.value.title == "API:REST API") | .value.revisions[0].revid] | first // "0"' \
+            /tmp/mw_response.json)
+
+          CURRENT_TOU=$(jq -r \
+            '[.query.pages | to_entries[] | select(.value.title | test("Terms_of_Use|Terms of Use"; "i")) | .value.revisions[0].revid] | first // "0"' \
+            /tmp/fw_response.json)
+
+          echo "Current — Etiquette: $CURRENT_ETIQUETTE | ToU: $CURRENT_TOU | REST: $CURRENT_REST"
+
+          # Guard: if a fetch returned 0 the API may be down — skip that page to
+          # avoid false negatives wiping the baseline.
+          CHANGES=""
+
+          if [ "$CURRENT_ETIQUETTE" != "0" ] && [ "$CURRENT_ETIQUETTE" != "$STORED_ETIQUETTE" ]; then
+            CHANGES="${CHANGES}\n- **API:Etiquette** updated (was revid \`${STORED_ETIQUETTE}\`, now \`${CURRENT_ETIQUETTE}\`) — [view diff](https://www.mediawiki.org/w/index.php?title=API:Etiquette&diff=${CURRENT_ETIQUETTE}&oldid=${STORED_ETIQUETTE})"
+          fi
+
+          if [ "$CURRENT_TOU" != "0" ] && [ "$CURRENT_TOU" != "$STORED_TOU" ]; then
+            CHANGES="${CHANGES}\n- **Policy:Terms_of_Use** updated (was revid \`${STORED_TOU}\`, now \`${CURRENT_TOU}\`) — [view diff](https://foundation.wikimedia.org/w/index.php?title=Policy:Terms_of_Use&diff=${CURRENT_TOU}&oldid=${STORED_TOU})"
+          fi
+
+          if [ "$CURRENT_REST" != "0" ] && [ "$CURRENT_REST" != "$STORED_REST" ]; then
+            CHANGES="${CHANGES}\n- **API:REST_API** updated (was revid \`${STORED_REST}\`, now \`${CURRENT_REST}\`) — [view diff](https://www.mediawiki.org/w/index.php?title=API:REST_API&diff=${CURRENT_REST}&oldid=${STORED_REST})"
+          fi
+
+          if [ -n "$CHANGES" ]; then
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            printf "%b" "$CHANGES" > /tmp/changes.txt
+            echo "Changes detected — will open issue and update baseline."
+          else
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            echo "No policy changes detected."
+          fi
+
+          # Always emit current values so the baseline update step can use them.
+          echo "etiquette=${CURRENT_ETIQUETTE}" >> "$GITHUB_OUTPUT"
+          echo "tou=${CURRENT_TOU}"             >> "$GITHUB_OUTPUT"
+          echo "rest=${CURRENT_REST}"           >> "$GITHUB_OUTPUT"
+
+      - name: Update baseline file
+        if: steps.compare.outputs.has_changes == 'true'
+        run: |
+          TODAY=$(date -u +%Y-%m-%d)
+          jq \
+            --arg  date       "$TODAY" \
+            --argjson etiquette "${{ steps.compare.outputs.etiquette }}" \
+            --argjson tou       "${{ steps.compare.outputs.tou }}" \
+            --argjson rest      "${{ steps.compare.outputs.rest }}" \
+            '.last_checked = $date
+             | .pages["API:Etiquette"].revid      = $etiquette
+             | .pages["Policy:Terms_of_Use"].revid = $tou
+             | .pages["API:REST_API"].revid        = $rest' \
+            .github/wikipedia-policy-revisions.json > /tmp/revisions-updated.json
+          mv /tmp/revisions-updated.json .github/wikipedia-policy-revisions.json
+          echo "Baseline updated to $(date -u +%Y-%m-%d)."
+
+      - name: Commit updated baseline
+        if: steps.compare.outputs.has_changes == 'true'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .github/wikipedia-policy-revisions.json
+          git commit -m "chore: update Wikipedia policy revision baseline [skip ci]"
+          git push
+
+      - name: Open GitHub issue for policy change
+        if: steps.compare.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          CHANGES=$(cat /tmp/changes.txt)
+          {
+            printf '## Wikimedia Policy Change Detected\n\n'
+            printf 'The following policy pages have new revision IDs since the last monthly check:\n\n'
+            printf '%s\n\n' "$CHANGES"
+            printf '## Required Actions\n\n'
+            printf '1. Click the diff links above and review what changed\n'
+            printf '2. Update grep patterns in `.github/workflows/called-wikipedia-policy.yml` if any new requirements affect org repos\n'
+            printf '3. Open a PR to this repo and close this issue once reviewed\n\n'
+            printf '## Policy References\n'
+            printf '- [API:Etiquette](https://www.mediawiki.org/wiki/API:Etiquette)\n'
+            printf '- [API:REST_API](https://www.mediawiki.org/wiki/API:REST_API)\n'
+            printf '- [Policy:Terms_of_Use](https://foundation.wikimedia.org/wiki/Policy:Terms_of_Use)\n\n'
+            printf '---\n*Auto-opened by [scheduled-wikipedia-policy-monitor](../../actions/workflows/scheduled-wikipedia-policy-monitor.yml)*\n'
+          } > /tmp/issue_body.md
+
+          gh issue create \
+            --title "action required: Wikimedia policy pages updated — review called-wikipedia-policy.yml" \
+            --body-file /tmp/issue_body.md
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "================================="
+          echo "  Wikipedia Policy Monitor Done"
+          echo "================================="
+          echo "  Run date    : $(date -u +%Y-%m-%d)"
+          echo "  Has changes : ${{ steps.compare.outputs.has_changes }}"
+          echo "================================="
