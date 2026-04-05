@@ -64,6 +64,33 @@ fail the check. Flip a repo's key to `required` in
 Wikipedia uses a stricter model (`allowed-repo:` input gate) and is not
 listed in `policy-enforcement.yml`.
 
+## Policy change monitors
+
+Two mechanisms keep org workflows calibrated against upstream policy changes:
+
+### Wikipedia (`scheduled-wikipedia-policy-monitor.yml`)
+- Runs monthly via cron. Calls the MediaWiki API to fetch current revision IDs
+  for `API:Etiquette`, `API:REST_API`, and `Policy:Terms_of_Use`.
+- Compares against baseline in `.github/wikipedia-policy-revisions.json`.
+- On change: opens a GitHub issue with direct diff links, commits updated baseline.
+- No external credentials — uses `GITHUB_TOKEN` (automatic).
+
+### OpenAI RSS (`scheduled-openai-news-monitor.yml`)
+- Runs weekly (Monday 09:00 UTC). Fetches `https://openai.com/news/rss.xml` and
+  filters new items for policy-relevant keywords (policy, terms, guidelines, etc.).
+- Tracks seen item GUIDs in `.github/openai-news-baseline.json` to avoid duplicates.
+- First run seeds the baseline without opening issues; subsequent runs alert on new items.
+- On match: opens a GitHub issue tagged `policy-update` with a link to the article.
+- No external credentials — uses `GITHUB_TOKEN` (automatic).
+
+### OpenAI email fallback (`cloudflare/openai-policy-worker/`)
+- Cloudflare Email Worker deployed to `wcmchenry3.workers.dev`.
+- Receives forwarded OpenAI newsletter emails via `openai-policy@buffingchi.com`
+  (Email Routing configured on buffingchi.com).
+- Opens a GitHub issue tagged `policy-update` for each received email.
+- Requires secret: `GITHUB_TOKEN` (fine-grained PAT, `issues: write` on this repo)
+  — already set via `wrangler secret put GITHUB_TOKEN`.
+
 ## Conventions
 
 - Workflows are prefixed `called-` and use `workflow_call` triggers.
