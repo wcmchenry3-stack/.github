@@ -23,18 +23,31 @@ on:
         description: 'User-Agent header to send. Default identifies the check so Cloudflare / WAFs can allowlist it; raw curl UA is often blocked.'
         type: string
         default: 'github-actions-backend-health-check/1.0'
+    # Consumer repos that need to bypass a WAF on /health should:
+    #   1. Store a secret named BACKEND_HEALTH_PROBE_TOKEN in the repo/org
+    #   2. Call this workflow with `secrets: inherit`
+    #   3. Create a WAF custom rule allowlisting X-Health-Probe == <token> on /health
+    # When the secret is absent (most consumers), no header is sent and the
+    # behavior is identical to before. See wcmchenry3-stack/book_app#183.
 
 jobs:
   backend-health:
     name: Backend Health
     runs-on: ubuntu-latest
+    env:
+      PROBE_TOKEN: ${{ secrets.BACKEND_HEALTH_PROBE_TOKEN }}
     steps:
       - name: Check backend health endpoint
         run: |
           URL="${{ inputs.backend-url }}${{ inputs.health-path }}"
           echo "Checking $URL ..."
+          HEADER_ARG=()
+          if [ -n "$PROBE_TOKEN" ]; then
+            HEADER_ARG=(-H "X-Health-Probe: $PROBE_TOKEN")
+            echo "Sending X-Health-Probe header (token configured)"
+          fi
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 \
-            -A "${{ inputs.user-agent }}" "$URL")
+            -A "${{ inputs.user-agent }}" "${HEADER_ARG[@]}" "$URL")
           echo "Backend returned: $STATUS"
           if [ "$STATUS" != "200" ]; then
             echo "::error::Backend health check failed (HTTP $STATUS)"
@@ -48,8 +61,12 @@ jobs:
           URL="${{ inputs.backend-url }}${{ inputs.probe-path }}"
           EXPECTED="${{ inputs.probe-expected-status }}"
           echo "Probing $URL (expect HTTP $EXPECTED) ..."
+          HEADER_ARG=()
+          if [ -n "$PROBE_TOKEN" ]; then
+            HEADER_ARG=(-H "X-Health-Probe: $PROBE_TOKEN")
+          fi
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 \
-            -A "${{ inputs.user-agent }}" "$URL")
+            -A "${{ inputs.user-agent }}" "${HEADER_ARG[@]}" "$URL")
           echo "Probe returned: $STATUS"
           if [ "$STATUS" != "$EXPECTED" ]; then
             echo "::error::Probe endpoint returned unexpected status: $STATUS (expected $EXPECTED)"
