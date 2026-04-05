@@ -1,7 +1,10 @@
-name            = "openai-policy-worker"
-main            = "src/index.js"
+name               = "openai-policy-worker"
+main               = "src/index.js"
 compatibility_date = "2024-09-23"
 
-# This Worker is triggered by Cloudflare Email Routing — no HTTP routes needed.
+# Email Workers are triggered by Cloudflare Email Routing, not HTTP.
+workers_dev  = false   # no public workers.dev HTTP endpoint needed
+preview_urls = false   # no preview URLs needed
+
 # Secrets (set via `wrangler secret put`):
 #   GITHUB_TOKEN — fine-grained PAT, issues:write on wcmchenry3-stack/.github

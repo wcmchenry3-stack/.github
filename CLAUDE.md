@@ -75,14 +75,21 @@ Two mechanisms keep org workflows calibrated against upstream policy changes:
 - On change: opens a GitHub issue with direct diff links, commits updated baseline.
 - No external credentials — uses `GITHUB_TOKEN` (automatic).
 
-### OpenAI (`cloudflare/openai-policy-worker/`)
-- Cloudflare Email Worker. Receives forwarded OpenAI newsletter emails.
-- Parses subject + body and opens a GitHub issue tagged `policy-update`.
-- Requires one secret: `GITHUB_TOKEN` — a fine-grained PAT with `issues: write`
-  on this repo, stored via `wrangler secret put GITHUB_TOKEN`.
-- Deploy: `cd cloudflare/openai-policy-worker && npm install && npm run deploy`
-- Email routing: Cloudflare dashboard → Email Routing → route
-  `openai-policy@<your-domain>` → Worker `openai-policy-worker`.
+### OpenAI RSS (`scheduled-openai-news-monitor.yml`)
+- Runs weekly (Monday 09:00 UTC). Fetches `https://openai.com/news/rss.xml` and
+  filters new items for policy-relevant keywords (policy, terms, guidelines, etc.).
+- Tracks seen item GUIDs in `.github/openai-news-baseline.json` to avoid duplicates.
+- First run seeds the baseline without opening issues; subsequent runs alert on new items.
+- On match: opens a GitHub issue tagged `policy-update` with a link to the article.
+- No external credentials — uses `GITHUB_TOKEN` (automatic).
+
+### OpenAI email fallback (`cloudflare/openai-policy-worker/`)
+- Cloudflare Email Worker deployed to `wcmchenry3.workers.dev`.
+- Receives forwarded OpenAI newsletter emails via `openai-policy@buffingchi.com`
+  (Email Routing configured on buffingchi.com).
+- Opens a GitHub issue tagged `policy-update` for each received email.
+- Requires secret: `GITHUB_TOKEN` (fine-grained PAT, `issues: write` on this repo)
+  — already set via `wrangler secret put GITHUB_TOKEN`.
 
 ## Conventions
 

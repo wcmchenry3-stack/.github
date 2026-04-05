@@ -1,0 +1,187 @@
+name: OpenAI News Policy Monitor
+
+# Polls the OpenAI news RSS feed weekly and opens a GitHub issue for any
+# new item whose title or description contains policy-relevant keywords.
+#
+# Uses item GUIDs to track what has already been seen, so re-runs never
+# produce duplicate issues.
+#
+# First run: initialises the seen-GUID baseline without opening any issues
+#   (current feed items are marked as seen, not alerted on).
+# Subsequent runs: only new items trigger issues.
+#
+# Manual trigger: workflow_dispatch
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'   # 09:00 UTC every Monday
+  workflow_dispatch:
+
+permissions:
+  contents: write   # to commit updated baseline
+  issues: write     # to open alert issues
+
+jobs:
+  check-openai-news:
+    name: Check OpenAI News RSS
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch and parse RSS feed
+        id: parse
+        run: |
+          python3 << 'PYEOF'
+          import urllib.request, xml.etree.ElementTree as ET, json, os, sys
+          from datetime import datetime, timezone
+
+          FEED_URL   = "https://openai.com/news/rss.xml"
+          BASELINE   = ".github/openai-news-baseline.json"
+          UA         = "wcmchenry3-stack-policy-monitor/1.0 (github.com/wcmchenry3-stack/.github)"
+
+          KEYWORDS = [
+              "policy", "policies", "terms of use", "usage policy",
+              "guidelines", "compliance", "safety", "moderation",
+              "acceptable use", "prohibited", "enforcement",
+          ]
+
+          # ── load baseline ────────────────────────────────────────────────
+          with open(BASELINE) as f:
+              baseline = json.load(f)
+
+          seen_guids  = set(baseline.get("seen_guids", []))
+          initialised = baseline.get("initialised", False)
+
+          # ── fetch feed ───────────────────────────────────────────────────
+          req = urllib.request.Request(FEED_URL, headers={"User-Agent": UA})
+          try:
+              with urllib.request.urlopen(req, timeout=30) as resp:
+                  tree = ET.parse(resp)
+          except Exception as e:
+              print(f"ERROR: failed to fetch RSS feed: {e}", file=sys.stderr)
+              sys.exit(1)
+
+          channel   = tree.getroot().find("channel")
+          items     = channel.findall("item")
+          all_guids = []
+
+          print(f"Feed contains {len(items)} items.")
+
+          new_policy_items = []
+
+          for item in items:
+              guid  = item.findtext("guid") or item.findtext("link") or ""
+              title = item.findtext("title") or ""
+              desc  = item.findtext("description") or ""
+              link  = item.findtext("link") or ""
+              pub   = item.findtext("pubDate") or ""
+
+              all_guids.append(guid)
+
+              if guid in seen_guids:
+                  continue  # already processed
+
+              text = (title + " " + desc).lower()
+              if any(kw in text for kw in KEYWORDS):
+                  new_policy_items.append({"title": title, "link": link, "pubDate": pub, "guid": guid})
+
+          # ── write outputs ─────────────────────────────────────────────────
+          github_output = os.environ["GITHUB_OUTPUT"]
+
+          if not initialised:
+              # First run: seed the baseline, skip alerts.
+              print("First run — seeding baseline. No issues will be opened.")
+              with open(github_output, "a") as f:
+                  f.write("has_changes=false\n")
+                  f.write("first_run=true\n")
+          elif new_policy_items:
+              print(f"{len(new_policy_items)} new policy-relevant item(s):")
+              for it in new_policy_items:
+                  print(f"  · {it['title']}")
+              with open("/tmp/policy_items.json", "w") as f:
+                  json.dump(new_policy_items, f, indent=2)
+              with open(github_output, "a") as f:
+                  f.write("has_changes=true\n")
+                  f.write("first_run=false\n")
+          else:
+              print("No new policy-relevant items.")
+              with open(github_output, "a") as f:
+                  f.write("has_changes=false\n")
+                  f.write("first_run=false\n")
+
+          # ── update baseline ───────────────────────────────────────────────
+          # Keep the most recent 200 GUIDs to bound file growth.
+          merged = list(seen_guids | set(all_guids))[-200:]
+          baseline["seen_guids"]    = merged
+          baseline["last_checked"]  = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+          baseline["initialised"]   = True
+
+          with open("/tmp/baseline_updated.json", "w") as f:
+              json.dump(baseline, f, indent=2)
+
+          PYEOF
+
+      - name: Commit updated baseline
+        run: |
+          cp /tmp/baseline_updated.json .github/openai-news-baseline.json
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .github/openai-news-baseline.json
+          git diff --cached --quiet || git commit -m "chore: update OpenAI news baseline [skip ci]"
+          git push
+
+      - name: Open GitHub issue for each policy item
+        if: steps.parse.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 << 'PYEOF'
+          import json, subprocess
+
+          with open("/tmp/policy_items.json") as f:
+              items = json.load(f)
+
+          for item in items:
+              title    = item["title"]
+              link     = item["link"]
+              pub_date = item["pubDate"]
+
+              body = "\n".join([
+                  "## OpenAI Policy-Relevant News",
+                  "",
+                  f"**Title:** {title}",
+                  f"**Published:** {pub_date}",
+                  f"**Link:** {link}",
+                  "",
+                  "---",
+                  "",
+                  "## Required Actions",
+                  "",
+                  "1. Read the linked article and assess whether it affects org API usage",
+                  "2. Update grep patterns in `.github/workflows/called-openai-policy.yml` if new requirements apply",
+                  "3. Close this issue once reviewed",
+                  "",
+                  "---",
+                  "*Auto-opened by [scheduled-openai-news-monitor](../../actions/workflows/scheduled-openai-news-monitor.yml)*",
+              ])
+
+              subprocess.run([
+                  "gh", "issue", "create",
+                  "--title", f"OpenAI news: {title}",
+                  "--body",  body,
+                  "--label", "policy-update",
+              ], check=True)
+
+          PYEOF
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "================================="
+          echo "  OpenAI News Monitor Done"
+          echo "================================="
+          echo "  Run date    : $(date -u +%Y-%m-%d)"
+          echo "  Has changes : ${{ steps.parse.outputs.has_changes }}"
+          echo "  First run   : ${{ steps.parse.outputs.first_run }}"
+          echo "================================="
