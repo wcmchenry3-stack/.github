@@ -69,3 +69,10 @@ listed in `policy-enforcement.yml`.
 - Workflows are prefixed `called-` and use `workflow_call` triggers.
 - All repos should inherit `.claude/` from this meta-repo when possible.
 - `settings.local.json` is gitignored — use it for personal overrides.
+
+## Removed workflows
+
+- `scheduled-openai-policy-check.yml` — removed. Used `curl -f` to scrape `openai.com/policies/*`,
+  which is Cloudflare-protected and blocks GitHub Actions runners (exit 22). Never successfully ran.
+- `scheduled-wikipedia-policy-check.yml` — removed. MediaWiki API curl calls failed on every run
+  (exit 2). Never successfully ran. Use Wikimedia's built-in watchlist/email notifications instead.
