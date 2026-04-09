@@ -63,7 +63,7 @@ jobs:
           exit 1
 
       - name: OWASP ZAP baseline scan
-        uses: zaproxy/action-baseline@v0.12.0
+        uses: zaproxy/action-baseline@v0.15.0
         with:
           target: ${{ inputs.zap-target-url }}
           # fail_action: false — ZAP findings reported as artifacts, do not roll back the deploy
