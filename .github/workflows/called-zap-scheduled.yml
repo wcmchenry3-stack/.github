@@ -6,7 +6,8 @@ on:
       target-url:
         description: 'URL to scan'
         type: string
-        required: true
+        required: false
+        default: ''
       artifact-name:
         description: 'Name for the uploaded ZAP report artifact'
         type: string
@@ -22,13 +23,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run ZAP baseline scan
+        if: ${{ inputs.target-url != '' }}
         uses: zaproxy/action-baseline@v0.15.0
         with:
           target: ${{ inputs.target-url }}
           fail_action: false
       - name: Upload ZAP report
         uses: actions/upload-artifact@v4
-        if: always()
+        if: ${{ inputs.target-url != '' }}
         with:
           name: ${{ inputs.artifact-name }}-${{ github.run_id }}
           path: report_html.html

@@ -7,6 +7,10 @@ on:
         description: 'Human-readable service name used in artifact naming'
         type: string
         required: true
+      service-id:
+        description: 'Render service ID (overrides RENDER_SERVICE_ID secret; required for repos that deploy multiple services)'
+        type: string
+        required: false
       zap-target-url:
         description: 'Live URL to run ZAP baseline scan against after deploy'
         type: string
@@ -15,7 +19,7 @@ on:
       RENDER_API_KEY:
         required: true
       RENDER_SERVICE_ID:
-        required: true
+        required: false
 
 jobs:
   deploy:
@@ -25,8 +29,9 @@ jobs:
       - name: Trigger Render deploy
         id: trigger
         run: |
+          service_id="${{ inputs.service-id || secrets.RENDER_SERVICE_ID }}"
           response=$(curl -s -w "\n%{http_code}" -X POST \
-            "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/deploys" \
+            "https://api.render.com/v1/services/${service_id}/deploys" \
             -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
             -H "Content-Type: application/json" \
             -d '{"clearCache":"do_not_clear"}')
@@ -40,7 +45,7 @@ jobs:
       - name: Wait for deploy to complete
         run: |
           deploy_id="${{ steps.trigger.outputs.deploy_id }}"
-          service_id="${{ secrets.RENDER_SERVICE_ID }}"
+          service_id="${{ inputs.service-id || secrets.RENDER_SERVICE_ID }}"
           echo "Polling deploy $deploy_id ..."
           for i in $(seq 1 20); do
             sleep 30
