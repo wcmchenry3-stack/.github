@@ -21,8 +21,8 @@ jobs:
     env:
       RUN_A11Y: ${{ inputs.run-a11y }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ inputs.node-version }}
           cache: npm
