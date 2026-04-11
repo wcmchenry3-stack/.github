@@ -1,0 +1,10 @@
+name: Commitlint
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+    branches: [main, dev]
+
+jobs:
+  commitlint:
+    uses: wcmchenry3-stack/.github/.github/workflows/called-commitlint.yml@main

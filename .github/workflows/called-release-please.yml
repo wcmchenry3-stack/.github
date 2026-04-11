@@ -1,0 +1,36 @@
+name: Release Please (reusable)
+
+# Runs release-please on every push to main.
+# release-please reads release-please-config.json and
+# .release-please-manifest.json from the calling repo root.
+#
+# Flow:
+#   1. A conventional-commit PR is merged to main.
+#   2. This workflow opens a "Release PR" (chore: release X.Y.Z) that bumps
+#      the version file and updates CHANGELOG.md.
+#   3. When the Release PR is merged, release-please creates a git tag
+#      (vX.Y.Z) and a GitHub Release automatically.
+#
+# Pre-live convention: all apps start at 0.1.0.
+# 1.0.0 = official public launch, cut via feat!: PR or manual manifest edit.
+
+on:
+  workflow_call:
+    secrets:
+      release-token:
+        description: >
+          Optional fine-grained PAT with contents:write and pull-requests:write.
+          Falls back to the default GITHUB_TOKEN if not provided.
+        required: false
+
+jobs:
+  release-please:
+    name: Release Please
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.release-token || secrets.GITHUB_TOKEN }}

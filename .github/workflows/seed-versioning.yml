@@ -1,0 +1,204 @@
+name: Seed Versioning Config
+
+# One-time workflow to initialize release-please config files in a target
+# app repo. Run via workflow_dispatch for each repo before release-please
+# can create its first Release PR.
+#
+# Files created in the target repo (on a branch, via PR):
+#   release-please-config.json     — release-please behaviour config
+#   .release-please-manifest.json  — tracks current version (starts at 0.1.0)
+#
+# Pre-live convention: 0.x.y until official launch (1.0.0).
+# bump-minor-pre-major: feat: → minor, fix: → patch (not major until 1.0.0+)
+
+on:
+  workflow_dispatch:
+    inputs:
+      target-repo:
+        description: 'Target repo name (without org prefix), e.g. gaming_app'
+        required: true
+        type: choice
+        options:
+          - gaming_app
+          - office_holder_cursor
+          - book_app
+          - powerplayshistory_site
+          - wcm_portfolio_site
+          - buffingchi_site
+      release-type:
+        description: 'release-please release type'
+        required: false
+        default: 'node'
+        type: choice
+        options:
+          - node
+          - python
+          - simple
+      initial-version:
+        description: 'Starting version (default: 0.1.0)'
+        required: false
+        default: '0.1.0'
+
+jobs:
+  seed:
+    name: Seed → ${{ inputs.target-repo }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create versioning config in ${{ inputs.target-repo }}
+        env:
+          GH_TOKEN: ${{ secrets.COMMUNITY_HEALTH_SYNC_PAT }}
+          REPO: wcmchenry3-stack/${{ inputs.target-repo }}
+          RELEASE_TYPE: ${{ inputs.release-type }}
+          INITIAL_VERSION: ${{ inputs.initial-version }}
+        run: |
+          python3 - << 'PYEOF'
+          import os, json, base64, urllib.request, urllib.error, sys
+
+          REPO            = os.environ['REPO']
+          TOKEN           = os.environ['GH_TOKEN']
+          RELEASE_TYPE    = os.environ['RELEASE_TYPE']
+          INITIAL_VERSION = os.environ['INITIAL_VERSION']
+          BRANCH          = 'chore/seed-versioning'
+          API             = 'https://api.github.com'
+
+          release_please_config = {
+              "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+              "release-type": RELEASE_TYPE,
+              "bump-minor-pre-major": True,
+              "bump-patch-for-minor-pre-major": False,
+              "changelog-sections": [
+                  {"type": "feat",  "section": "Features"},
+                  {"type": "fix",   "section": "Bug Fixes"},
+                  {"type": "perf",  "section": "Performance Improvements"},
+                  {"type": "docs",  "section": "Documentation"},
+                  {"type": "chore", "hidden": True},
+                  {"type": "ci",    "hidden": True},
+                  {"type": "test",  "hidden": True},
+                  {"type": "style", "hidden": True},
+                  {"type": "refactor", "hidden": True},
+                  {"type": "build", "hidden": True},
+              ],
+          }
+
+          release_please_manifest = {
+              ".": INITIAL_VERSION,
+          }
+
+          FILE_MAP = {
+              'release-please-config.json':
+                  json.dumps(release_please_config, indent=2) + '\n',
+              '.release-please-manifest.json':
+                  json.dumps(release_please_manifest, indent=2) + '\n',
+          }
+
+          def api(path, method='GET', body=None):
+              url = f'{API}{path}'
+              data = json.dumps(body).encode() if body is not None else None
+              req = urllib.request.Request(url, data=data, method=method)
+              req.add_header('Authorization', f'Bearer {TOKEN}')
+              req.add_header('Accept', 'application/vnd.github+json')
+              req.add_header('X-GitHub-Api-Version', '2022-11-28')
+              if data:
+                  req.add_header('Content-Type', 'application/json')
+              try:
+                  with urllib.request.urlopen(req) as r:
+                      return {} if r.status == 204 else json.loads(r.read())
+              except urllib.error.HTTPError as e:
+                  if e.code == 404:
+                      return None
+                  msg = e.read().decode()
+                  print(f'  HTTP {e.code} {method} {path}: {msg}', file=sys.stderr)
+                  sys.exit(1)
+
+          # -- Resolve default branch -------------------------------------------
+          repo_info      = api(f'/repos/{REPO}')
+          default_branch = repo_info['default_branch']
+          print(f'{REPO} (default branch: {default_branch})')
+
+          # -- Check for existing config files -----------------------------------
+          needs_create = []
+          for dest, content in FILE_MAP.items():
+              existing = api(f'/repos/{REPO}/contents/{dest}?ref={default_branch}')
+              if existing is None:
+                  print(f'  {dest}: missing → will create')
+                  needs_create.append((dest, content))
+              else:
+                  print(f'  {dest}: already exists — skipping (delete manually to re-seed)')
+
+          if not needs_create:
+              print('  All versioning files already exist. Nothing to do.')
+              sys.exit(0)
+
+          # -- Guard against duplicate open PRs ----------------------------------
+          open_prs = api(
+              f'/repos/{REPO}/pulls'
+              f'?state=open&head=wcmchenry3-stack:{BRANCH}'
+          )
+          if open_prs:
+              print(f'  Open seed PR already exists: {open_prs[0]["html_url"]} — skipping.')
+              sys.exit(0)
+
+          # -- Reset seed branch -------------------------------------------------
+          stale = api(f'/repos/{REPO}/git/refs/heads/{BRANCH}')
+          if stale:
+              api(f'/repos/{REPO}/git/refs/heads/{BRANCH}', method='DELETE')
+              print(f'  Removed stale branch.')
+
+          base_sha = api(
+              f'/repos/{REPO}/git/refs/heads/{default_branch}'
+          )['object']['sha']
+
+          api(f'/repos/{REPO}/git/refs', method='POST', body={
+              'ref': f'refs/heads/{BRANCH}',
+              'sha': base_sha,
+          })
+          print(f'  Created branch {BRANCH}.')
+
+          # -- Commit each file --------------------------------------------------
+          for dest, content in needs_create:
+              encoded     = base64.b64encode(content.encode()).decode()
+              on_branch   = api(f'/repos/{REPO}/contents/{dest}?ref={BRANCH}')
+              commit_body = {
+                  'message': f'chore: seed release-please versioning config at {INITIAL_VERSION}',
+                  'content': encoded,
+                  'branch':  BRANCH,
+              }
+              if on_branch:
+                  commit_body['sha'] = on_branch['sha']
+              api(f'/repos/{REPO}/contents/{dest}', method='PUT', body=commit_body)
+              print(f'  Committed {dest}')
+
+          # -- Open PR -----------------------------------------------------------
+          pr_body = (
+              f'Seeds release-please versioning config into `{REPO}` at '
+              f'version `{INITIAL_VERSION}`.\n\n'
+              '## Files added\n\n'
+              '- `release-please-config.json` — release-please behaviour '
+              f'(type: `{RELEASE_TYPE}`, `bump-minor-pre-major: true`)\n'
+              '- `.release-please-manifest.json` — version tracker '
+              f'(starting at `{INITIAL_VERSION}`)\n\n'
+              '## After merging\n\n'
+              'The `release-please.yml` workflow (already synced from the '
+              'org meta-repo) will activate on the next push to `main`. '
+              'It will open a Release PR whenever a `feat:` or `fix:` commit '
+              'lands.\n\n'
+              '**Pre-live convention:** `0.x.y` until official launch. '
+              'Cut `1.0.0` via a `feat!:` PR or by manually editing the manifest.\n\n'
+              '_Auto-generated by `seed-versioning.yml`._'
+          )
+
+          pr = api(f'/repos/{REPO}/pulls', method='POST', body={
+              'title': f'chore: seed release-please versioning config at {INITIAL_VERSION}',
+              'head':  BRANCH,
+              'base':  default_branch,
+              'body':  pr_body,
+          })
+          if pr:
+              print(f'  PR opened: {pr["html_url"]}')
+          else:
+              print('  Failed to open PR.', file=sys.stderr)
+              sys.exit(1)
+          PYEOF
