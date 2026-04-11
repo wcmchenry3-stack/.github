@@ -2,7 +2,8 @@ name               = "feedback-worker"
 main               = "src/index.js"
 compatibility_date = "2025-01-01"
 
-workers_dev = true   # HTTP endpoint — not an Email Worker
+workers_dev  = true    # HTTP endpoint — not an Email Worker
+preview_urls = false   # disable preview URLs
 
 # KV namespace for rate limiting.
 # To create:
@@ -11,8 +12,8 @@ workers_dev = true   # HTTP endpoint — not an Email Worker
 # Then fill in the IDs below.
 [[kv_namespaces]]
 binding    = "RATE_LIMIT_KV"
-id         = "PLACEHOLDER_REPLACE_WITH_PROD_KV_ID"
-preview_id = "PLACEHOLDER_REPLACE_WITH_PREVIEW_KV_ID"
+id         = "ed31100d2c114623916f9bda1baa77c2"
+preview_id = "84b551225fb9492eac376e4a0e3ac42e"
 
 # Secrets — set via `wrangler secret put <NAME>` (never commit values):
 #   ANTHROPIC_API_KEY  — Anthropic API key (claude-haiku-4-5-20251001)
