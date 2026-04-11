@@ -1,0 +1,177 @@
+name: Render Build Preflight
+
+# Mimics Render's build pipeline and catches deployment failures before
+# they hit production. Runs npm ci + build, then checks Render-specific
+# gotchas that generic CI misses.
+#
+# Usage (static site):
+#   uses: wcmchenry3-stack/.github/.github/workflows/called-render-preflight.yml@main
+#   with:
+#     service-type: static
+#     build-output-dir: dist
+#
+# Usage (web service):
+#   uses: wcmchenry3-stack/.github/.github/workflows/called-render-preflight.yml@main
+#   with:
+#     service-type: web
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: 'Node.js version — must match the Render environment setting'
+        type: string
+        default: '20'
+      working-directory:
+        description: 'Directory containing package.json'
+        type: string
+        default: '.'
+      service-type:
+        description: >
+          "static" or "web".
+          static: checks build output dir and render.yaml staticPublishPath.
+          web: also checks start script and hardcoded PORT usage.
+        type: string
+        default: 'static'
+      build-output-dir:
+        description: 'Expected build output directory (must match render.yaml staticPublishPath)'
+        type: string
+        default: 'dist'
+
+jobs:
+  render-preflight:
+    name: Render build preflight (${{ inputs.service-type }})
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+      # ── Build ────────────────────────────────────────────────────────────
+      - name: Install dependencies
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          echo "Using npm ci (matches Render's install behavior)"
+          npm ci
+
+      - name: Build
+        working-directory: ${{ inputs.working-directory }}
+        run: npm run build
+
+      # ── Build output check ───────────────────────────────────────────────
+      - name: Verify build output directory exists
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          DIR="${{ inputs.build-output-dir }}"
+          if [ ! -d "$DIR" ]; then
+            echo "::error::Build output directory '$DIR' not found after build."
+            echo "  Render serves files from this path (render.yaml staticPublishPath)."
+            echo "  Either the build failed silently or the output dir name is wrong."
+            exit 1
+          fi
+          COUNT=$(find "$DIR" -type f | wc -l)
+          echo "✓ '$DIR' exists with $COUNT file(s)."
+
+      # ── render.yaml validation ───────────────────────────────────────────
+      - name: Validate render.yaml
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          FAILED=0
+
+          if [ ! -f render.yaml ]; then
+            echo "::warning::render.yaml not found at repo root."
+            echo "  Render services should be declared in render.yaml, not configured manually in the dashboard."
+            echo "  See: https://render.com/docs/infrastructure-as-code"
+          else
+            echo "✓ render.yaml found."
+
+            if [ "${{ inputs.service-type }}" = "static" ]; then
+              # Extract staticPublishPath, strip leading ./
+              PUBLISH_PATH=$(grep 'staticPublishPath' render.yaml | head -1 \
+                | sed 's/.*staticPublishPath:[[:space:]]*//' \
+                | tr -d '"'"'"' \
+                | sed 's|^\./||' \
+                | tr -d '[:space:]')
+              EXPECTED="${{ inputs.build-output-dir }}"
+
+              if [ -z "$PUBLISH_PATH" ]; then
+                echo "::warning::render.yaml has no staticPublishPath entry."
+                echo "  Expected: staticPublishPath: ./$EXPECTED"
+              elif [ "$PUBLISH_PATH" != "$EXPECTED" ]; then
+                echo "::error::render.yaml staticPublishPath is '$PUBLISH_PATH' but build-output-dir is '$EXPECTED'."
+                echo "  Render will serve files from '$PUBLISH_PATH', which may not exist."
+                FAILED=1
+              else
+                echo "✓ staticPublishPath matches build-output-dir ('$EXPECTED')."
+              fi
+
+              # Check SPA rewrite rule is present
+              if ! grep -q 'destination: /index.html' render.yaml; then
+                echo "::warning::No SPA rewrite rule found in render.yaml."
+                echo "  Without 'destination: /index.html', hard-refreshing non-root routes returns 404."
+              else
+                echo "✓ SPA rewrite rule present."
+              fi
+            fi
+          fi
+
+          [ "$FAILED" -eq 0 ] || exit 1
+
+      # ── Hardcoded localhost check ────────────────────────────────────────
+      - name: Check for hardcoded localhost references
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          MATCHES=$(grep -rEn 'localhost' \
+            --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' \
+            --exclude-dir=node_modules --exclude-dir=.git \
+            --exclude='*.test.*' --exclude='*.spec.*' \
+            --exclude='vite.config.*' --exclude='jest.config.*' --exclude='playwright.config.*' \
+            . 2>/dev/null || true)
+
+          if [ -n "$MATCHES" ]; then
+            echo "::warning::Hardcoded 'localhost' found in source files."
+            echo "  On Render, the service runs at its public URL — localhost won't resolve."
+            echo "  Use an environment variable (e.g. VITE_API_BASE_URL) instead."
+            echo ""
+            echo "$MATCHES"
+          else
+            echo "✓ No hardcoded localhost references."
+          fi
+
+      # ── Web service checks ───────────────────────────────────────────────
+      - name: Verify start script exists
+        if: ${{ inputs.service-type == 'web' }}
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          START=$(node -e "const p=require('./package.json'); console.log((p.scripts||{}).start||'')")
+          if [ -z "$START" ]; then
+            echo "::error::No 'start' script in package.json."
+            echo "  Render runs 'npm start' to launch the service. Add a start script."
+            exit 1
+          fi
+          echo "✓ start script: $START"
+
+      - name: Check for hardcoded port numbers
+        if: ${{ inputs.service-type == 'web' }}
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          MATCHES=$(grep -rEn 'listen\s*\(\s*(3000|8000|8080|4000|5000)\b' \
+            --include='*.ts' --include='*.js' --include='*.py' \
+            --exclude-dir=node_modules --exclude-dir=.git \
+            --exclude='*.test.*' --exclude='*.spec.*' \
+            . 2>/dev/null || true)
+
+          if [ -n "$MATCHES" ]; then
+            echo "::error::Hardcoded port found in server listen call."
+            echo "  Render assigns a dynamic port via PORT env var. Hardcoded ports fail health checks."
+            echo "  Use: app.listen(process.env.PORT || 3000)"
+            echo ""
+            echo "$MATCHES"
+            exit 1
+          else
+            echo "✓ No hardcoded server listen ports."
+          fi
