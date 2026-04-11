@@ -1,0 +1,24 @@
+name               = "feedback-worker"
+main               = "src/index.js"
+compatibility_date = "2025-01-01"
+
+workers_dev = true   # HTTP endpoint — not an Email Worker
+
+# KV namespace for rate limiting.
+# To create:
+#   wrangler kv namespace create RATE_LIMIT_KV
+#   wrangler kv namespace create RATE_LIMIT_KV --preview
+# Then fill in the IDs below.
+[[kv_namespaces]]
+binding    = "RATE_LIMIT_KV"
+id         = "PLACEHOLDER_REPLACE_WITH_PROD_KV_ID"
+preview_id = "PLACEHOLDER_REPLACE_WITH_PREVIEW_KV_ID"
+
+# Secrets — set via `wrangler secret put <NAME>` (never commit values):
+#   ANTHROPIC_API_KEY  — Anthropic API key (claude-haiku-4-5-20251001)
+#   GITHUB_TOKEN       — fine-grained PAT; needs issues:write on gaming_app + book_app repos,
+#                        and gists:write on the token owner's account
+#   ALLOWED_ORIGINS    — comma-separated allowed app origins
+#                        e.g. "https://gaming-app.wcmchenry3.com,https://book-app.wcmchenry3.com"
+#   APP_REPO_MAP       — comma-separated appId:org/repo mappings
+#                        e.g. "gaming_app:wcmchenry3-stack/gaming_app,book_app:wcmchenry3-stack/book_app"
