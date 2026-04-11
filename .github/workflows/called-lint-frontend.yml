@@ -34,5 +34,10 @@ jobs:
         run: npx eslint .
         working-directory: ${{ inputs.working-directory }}
       - name: Prettier
-        run: npx prettier --check .
+        run: |
+          # Exclude synced meta-repo files that are not project code.
+          # Appends to .prettierignore (creates it if absent, safe if it exists).
+          printf '\n# Synced from wcmchenry3-stack/.github — not project code\n.claude/\nCODE_OF_CONDUCT.md\nCONTRIBUTING.md\nSUPPORT.md\nSECURITY.md\n' \
+            >> .prettierignore
+          npx prettier --check .
         working-directory: ${{ inputs.working-directory }}
