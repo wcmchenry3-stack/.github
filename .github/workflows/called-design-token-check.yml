@@ -1,0 +1,332 @@
+name: Design Tokens & Accessibility Check
+
+# Validates that PR code in frontend files does not contain hard-coded
+# CSS values (colors, font sizes, font families) that should use design
+# tokens, and does not introduce common WCAG 2.2 AA accessibility violations.
+#
+# Policy references:
+#   https://www.w3.org/TR/WCAG22/
+#   https://www.w3.org/WAI/ARIA/apg/
+#
+# Applied to all repos. Checks are skipped automatically when no changed
+# files contain hard-coded style values or accessibility anti-patterns.
+#
+# Skip logic mirrors .claude/policies/design-tokens.md — update both together.
+
+on:
+  workflow_call:
+    inputs:
+      policy-version:
+        required: false
+        type: string
+        default: '2026-04-11'
+        description: >
+          ISO date this workflow was last reviewed against WCAG 2.2 and the
+          org design token conventions. Bump after reviewing upstream changes.
+
+jobs:
+  design-token-check:
+    name: Design Tokens & Accessibility Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Identify changed files with hard-coded style values
+        id: find-style-files
+        run: |
+          BASE_REF="${{ github.base_ref }}"
+          if [ -n "$BASE_REF" ]; then
+            git diff --name-only "origin/${BASE_REF}...HEAD" > changed_files.txt
+          else
+            git diff --name-only HEAD~1 HEAD > changed_files.txt 2>/dev/null || touch changed_files.txt
+          fi
+
+          echo "All changed files:"
+          cat changed_files.txt
+
+          > style_files.txt
+          while IFS= read -r file; do
+            # Skip .claude/ policy/config files
+            case "$file" in .claude/*) continue ;; esac
+
+            # Skip by path (directory-level exclusions)
+            if echo "$file" | grep -qE \
+              'node_modules/|(^|/)dist/|(^|/)build/|(^|/)\.cache/|(^|/)coverage/|(^|/)public/|(^|/)tokens/'; then
+              continue
+            fi
+
+            # Skip by filename (token definitions, generated, non-UI assets)
+            case "$(basename "$file")" in
+              *.min.css|*.min.js) continue ;;
+              *.stories.tsx|*.stories.ts|*.stories.jsx|*.stories.js) continue ;;
+              *.test.ts|*.test.tsx|*.test.js|*.test.jsx) continue ;;
+              *.spec.ts|*.spec.tsx|*.spec.js|*.spec.jsx) continue ;;
+              *.svg|*.md|*.mdx) continue ;;
+              *.tokens.json) continue ;;
+              tailwind.config.*|tailwind.config.ts|tailwind.config.js) continue ;;
+            esac
+            case "$file" in
+              *__snapshots__*|*__fixtures__*) continue ;;
+              theme.*.ts|theme.*.tsx|theme.*.js) continue ;;
+            esac
+
+            # Detect files with hard-coded style values or a11y anti-patterns
+            if [ -f "$file" ] && grep -qiE \
+              ':\s*#[0-9a-fA-F]{3,8}|rgba?\s*\(|hsla?\s*\(|font-size:\s*[0-9]+px|font-family:\s*["\x27]|tabindex=["\x27][1-9]' \
+              "$file"; then
+              echo "$file" >> style_files.txt
+            fi
+          done < changed_files.txt
+
+          if [ ! -s style_files.txt ]; then
+            echo "No changed files contain hard-coded style values — checks skipped."
+            echo "has_style_files=false" >> "$GITHUB_OUTPUT"
+          else
+            echo ""
+            echo "Files with hard-coded style values or a11y patterns:"
+            cat style_files.txt
+            echo "has_style_files=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ---------------------------------------------------------------
+      # Load enforcement mode for design-token policy.
+      # When mode == "required", violations fail the check.
+      # When mode == "advisory" (default), violations are annotated only.
+      # ---------------------------------------------------------------
+      - name: Load enforcement mode
+        id: enforce
+        run: |
+          CONFIG_URL="https://raw.githubusercontent.com/wcmchenry3-stack/.github/main/.github/policy-enforcement.yml"
+          if ! curl -sfL "$CONFIG_URL" -o /tmp/policy-enforcement.yml; then
+            echo "::warning::Could not fetch policy-enforcement.yml — defaulting to advisory"
+            echo "mode=advisory" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          REPO_NAME="${GITHUB_REPOSITORY##*/}"
+          MODE=$(yq ".overrides.\"${REPO_NAME}\"[\"design-tokens\"] // .defaults[\"design-tokens\"] // \"advisory\"" /tmp/policy-enforcement.yml)
+          if [ -z "$MODE" ] || [ "$MODE" = "null" ]; then MODE="advisory"; fi
+          echo "mode=${MODE}" >> "$GITHUB_OUTPUT"
+          echo "::notice::Design-token policy enforcement mode for ${REPO_NAME}: ${MODE}"
+
+      # ---------------------------------------------------------------
+      # Check 1: Hex color hardcoded [error]
+      # Hard-coded hex values bypass the design token system and make
+      # brand-wide color changes require touching every component.
+      # ---------------------------------------------------------------
+      - name: 'Check 1: Hex color hardcoded'
+        if: steps.find-style-files.outputs.has_style_files == 'true'
+        run: |
+          FAIL=0
+          HEX_PATTERN=':\s*#[0-9a-fA-F]{3,8}[;,\s"'"'"'\}]'
+          while IFS= read -r file; do
+            if grep -qE "$HEX_PATTERN" "$file"; then
+              MATCHES=$(grep -nE "$HEX_PATTERN" "$file" | head -5)
+              echo "::error file=$file::Hard-coded hex color detected. Replace with a design token (e.g. var(--color-brand-primary)). Hard-coded colors diverge from brand guidelines and make theme changes impossible. Matches: $MATCHES"
+              FAIL=1
+            fi
+          done < style_files.txt
+          if [ "$FAIL" -eq 0 ]; then
+            echo "Check 1 passed: No hard-coded hex colors detected."
+          elif [ "${{ steps.enforce.outputs.mode }}" != "required" ]; then
+            echo "::warning::Check 1 found violations but enforcement mode is '${{ steps.enforce.outputs.mode }}' — not failing check."
+            exit 0
+          fi
+          exit "$FAIL"
+
+      # ---------------------------------------------------------------
+      # Check 2: RGB/HSL color literal [error]
+      # rgba()/hsla() literal values are just as brittle as hex codes —
+      # both bypass the token system.
+      # ---------------------------------------------------------------
+      - name: 'Check 2: RGB/HSL color literal'
+        if: steps.find-style-files.outputs.has_style_files == 'true'
+        run: |
+          FAIL=0
+          RGBHSL_PATTERN='(color|background|background-color|border-color|fill|stroke|outline-color):\s*(rgb|rgba|hsl|hsla)\s*\('
+          while IFS= read -r file; do
+            if grep -qiE "$RGBHSL_PATTERN" "$file"; then
+              MATCHES=$(grep -niE "$RGBHSL_PATTERN" "$file" | head -5)
+              echo "::error file=$file::Hard-coded RGB/HSL color detected. Use a design token instead of inline color functions. Matches: $MATCHES"
+              FAIL=1
+            fi
+          done < style_files.txt
+          if [ "$FAIL" -eq 0 ]; then
+            echo "Check 2 passed: No hard-coded RGB/HSL color literals detected."
+          elif [ "${{ steps.enforce.outputs.mode }}" != "required" ]; then
+            echo "::warning::Check 2 found violations but enforcement mode is '${{ steps.enforce.outputs.mode }}' — not failing check."
+            exit 0
+          fi
+          exit "$FAIL"
+
+      # ---------------------------------------------------------------
+      # Check 3: Hardcoded font-size in px [error]
+      # Hard-coded px font sizes break WCAG 1.4.4 (Resize Text) because
+      # they ignore the user's browser font-size preference.
+      # https://www.w3.org/TR/WCAG22/#resize-text
+      # ---------------------------------------------------------------
+      - name: 'Check 3: Hardcoded font-size in px'
+        if: steps.find-style-files.outputs.has_style_files == 'true'
+        run: |
+          FAIL=0
+          FONTSIZE_PATTERN='font-size:\s*[0-9]+px'
+          while IFS= read -r file; do
+            if grep -qiE "$FONTSIZE_PATTERN" "$file"; then
+              MATCHES=$(grep -niE "$FONTSIZE_PATTERN" "$file" | head -5)
+              echo "::error file=$file::Hard-coded font-size in px detected. Use a design token (e.g. var(--font-size-md)) or a relative unit (rem/em) so user browser font-size preferences are respected (WCAG 1.4.4 Resize Text). Matches: $MATCHES"
+              FAIL=1
+            fi
+          done < style_files.txt
+          if [ "$FAIL" -eq 0 ]; then
+            echo "Check 3 passed: No hard-coded px font sizes detected."
+          elif [ "${{ steps.enforce.outputs.mode }}" != "required" ]; then
+            echo "::warning::Check 3 found violations but enforcement mode is '${{ steps.enforce.outputs.mode }}' — not failing check."
+            exit 0
+          fi
+          exit "$FAIL"
+
+      # ---------------------------------------------------------------
+      # Check 4: Hardcoded font-family [warning]
+      # String literal font families make typeface updates require
+      # touching every component rather than one token.
+      # ---------------------------------------------------------------
+      - name: 'Check 4: Hardcoded font-family (warning)'
+        if: steps.find-style-files.outputs.has_style_files == 'true'
+        run: |
+          FONTFAMILY_PATTERN="font-family:\s*[\"'][^\"']+[\"']"
+          while IFS= read -r file; do
+            if grep -qiE "$FONTFAMILY_PATTERN" "$file"; then
+              MATCHES=$(grep -niE "$FONTFAMILY_PATTERN" "$file" | head -5)
+              echo "::warning file=$file::Hard-coded font-family string literal detected. Reference a design token (e.g. var(--font-family-sans)) so the typeface can be updated centrally. Matches: $MATCHES"
+            fi
+          done < style_files.txt
+          echo "Check 4 complete: font-family warnings are informational — review before release."
+
+      # ---------------------------------------------------------------
+      # Check 5: tabindex > 0 [error]
+      # Positive tabindex values override the natural DOM tab order and
+      # create a confusing keyboard navigation experience (WCAG 2.4.3).
+      # https://www.w3.org/TR/WCAG22/#focus-order
+      # ---------------------------------------------------------------
+      - name: 'Check 5: tabindex > 0'
+        if: steps.find-style-files.outputs.has_style_files == 'true'
+        run: |
+          FAIL=0
+          TABINDEX_PATTERN='tabindex=["\x27][1-9][0-9]*["\x27]'
+          while IFS= read -r file; do
+            if grep -qE "$TABINDEX_PATTERN" "$file"; then
+              MATCHES=$(grep -nE "$TABINDEX_PATTERN" "$file" | head -5)
+              echo "::error file=$file::Positive tabindex value detected. Values > 0 override the natural DOM tab order (WCAG 2.4.3 Focus Order). Use tabindex=\"0\" to include in DOM order or tabindex=\"-1\" for programmatic focus only. Matches: $MATCHES"
+              FAIL=1
+            fi
+          done < style_files.txt
+          if [ "$FAIL" -eq 0 ]; then
+            echo "Check 5 passed: No positive tabindex values detected."
+          elif [ "${{ steps.enforce.outputs.mode }}" != "required" ]; then
+            echo "::warning::Check 5 found violations but enforcement mode is '${{ steps.enforce.outputs.mode }}' — not failing check."
+            exit 0
+          fi
+          exit "$FAIL"
+
+      # ---------------------------------------------------------------
+      # Check 6: Event handler on non-interactive element [warning]
+      # onclick/onkeydown on div/span/p lack built-in keyboard support,
+      # focus management, and ARIA semantics (WCAG 4.1.2).
+      # https://www.w3.org/TR/WCAG22/#name-role-value
+      # ---------------------------------------------------------------
+      - name: 'Check 6: Event handler on non-interactive element (warning)'
+        if: steps.find-style-files.outputs.has_style_files == 'true'
+        run: |
+          HANDLER_PATTERN='<(div|span|p|section|article|header|footer|main|aside)\b[^>]*on(click|keydown|keyup|keypress)='
+          while IFS= read -r file; do
+            if grep -qiE "$HANDLER_PATTERN" "$file"; then
+              MATCHES=$(grep -niE "$HANDLER_PATTERN" "$file" | head -5)
+              echo "::warning file=$file::Event handler on a non-interactive element detected. Use a native <button> or <a> instead — they have built-in keyboard support and ARIA semantics (WCAG 4.1.2). If a custom element is required, add role=\"button\" and tabindex=\"0\". Matches: $MATCHES"
+            fi
+          done < style_files.txt
+          echo "Check 6 complete: interactive-element warnings are informational."
+
+      # ---------------------------------------------------------------
+      # Check 7: img without alt attribute [error]
+      # All images require alt text for screen-reader users (WCAG 1.1.1).
+      # Same-line heuristic — multi-line JSX img tags may need manual review.
+      # https://www.w3.org/TR/WCAG22/#non-text-content
+      # ---------------------------------------------------------------
+      - name: 'Check 7: img without alt attribute'
+        if: steps.find-style-files.outputs.has_style_files == 'true'
+        run: |
+          FAIL=0
+          while IFS= read -r file; do
+            # Find lines with <img that do not contain alt= on the same line
+            if grep -iE '<img\b' "$file" | grep -qviE 'alt='; then
+              MATCHES=$(grep -niE '<img\b' "$file" | grep -viE 'alt=' | head -5)
+              echo "::error file=$file::<img> without alt attribute detected (same-line check). All images require alt text for screen readers (WCAG 1.1.1 Non-text Content). Use alt=\"\" for decorative images (add role=\"presentation\" too) or a descriptive string for informational images. Matches: $MATCHES"
+              FAIL=1
+            fi
+          done < style_files.txt
+          if [ "$FAIL" -eq 0 ]; then
+            echo "Check 7 passed: All img elements appear to have alt attributes (same-line check)."
+          elif [ "${{ steps.enforce.outputs.mode }}" != "required" ]; then
+            echo "::warning::Check 7 found violations but enforcement mode is '${{ steps.enforce.outputs.mode }}' — not failing check."
+            exit 0
+          fi
+          exit "$FAIL"
+
+      # ---------------------------------------------------------------
+      # Check 8: aria-hidden on focusable element [warning]
+      # Hidden elements remain keyboard-reachable, creating invisible
+      # focus traps for keyboard-only and AT users (WCAG 4.1.2).
+      # Same-line heuristic — multi-line JSX requires manual review.
+      # ---------------------------------------------------------------
+      - name: 'Check 8: aria-hidden on focusable element (warning)'
+        if: steps.find-style-files.outputs.has_style_files == 'true'
+        run: |
+          ARIA_HIDDEN_PATTERN='aria-hidden=["\x27]true["\x27]'
+          FOCUSABLE_PATTERN='href=|tabindex=|<button|<input|<select|<textarea|<a\s'
+          while IFS= read -r file; do
+            if grep -qE "$ARIA_HIDDEN_PATTERN" "$file"; then
+              # Check if any aria-hidden="true" line also contains a focusable indicator
+              if grep -E "$ARIA_HIDDEN_PATTERN" "$file" | grep -qiE "$FOCUSABLE_PATTERN"; then
+                MATCHES=$(grep -nE "$ARIA_HIDDEN_PATTERN" "$file" | grep -iE "$FOCUSABLE_PATTERN" | head -5)
+                echo "::warning file=$file::aria-hidden=\"true\" appears on a potentially focusable element (same-line heuristic). Hidden elements remain keyboard-reachable, creating invisible focus traps. Remove aria-hidden or move it to a non-focusable wrapper (WCAG 4.1.2). Multi-line JSX requires manual review. Matches: $MATCHES"
+              fi
+            fi
+          done < style_files.txt
+          echo "Check 8 complete: aria-hidden warnings are informational — manual review required for multi-line JSX."
+
+      # ---------------------------------------------------------------
+      # Summary — always runs so policy metadata is visible in every log
+      # ---------------------------------------------------------------
+      - name: Policy summary
+        if: always()
+        run: |
+          echo "============================================================"
+          echo "  Design Tokens & Accessibility Policy Compliance Summary"
+          echo "============================================================"
+          echo "  Policy snapshot date : ${{ inputs.policy-version }}"
+          echo "  Repo                 : ${{ github.repository }}"
+          echo "  Enforcement mode     : ${{ steps.enforce.outputs.mode }}"
+          echo ""
+          echo "  Checks (error = blocks when required; warning = always informational):"
+          echo "    1. Hex color hardcoded              [error]"
+          echo "    2. RGB/HSL color literal            [error]"
+          echo "    3. Hardcoded font-size in px        [error]"
+          echo "    4. Hardcoded font-family            [warning]"
+          echo "    5. tabindex > 0                     [error]"
+          echo "    6. Event handler on non-interactive [warning]"
+          echo "    7. img without alt attribute        [error]"
+          echo "    8. aria-hidden on focusable element [warning]"
+          echo ""
+          echo "  Policy references:"
+          echo "    WCAG 2.2          : https://www.w3.org/TR/WCAG22/"
+          echo "    ARIA APG          : https://www.w3.org/WAI/ARIA/apg/"
+          echo "    Design token docs : see .claude/policies/design-tokens.md"
+          echo ""
+          echo "  To update after a design system or WCAG change:"
+          echo "    1. Update patterns in called-design-token-check.yml"
+          echo "    2. Update .claude/policies/design-tokens.md to match"
+          echo "    3. Bump policy-version default to today's date"
+          echo "    4. Open a PR to wcmchenry3-stack/.github"
+          echo "============================================================"

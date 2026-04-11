@@ -48,8 +48,9 @@ for POLICY in $(jq -r 'to_entries[] | select(.value | type == "object") | .key' 
     # Skip .claude/ directory (contains policy definitions with pattern strings)
     case "$file" in .claude/*) continue ;; esac
 
-    # Skip files matching the skip pattern
-    if [ -n "$SKIP" ] && echo "$(basename "$file")" | grep -qE "$SKIP"; then
+    # Skip files matching the skip pattern (checked against full path and basename
+    # so patterns can exclude by directory prefix OR by filename)
+    if [ -n "$SKIP" ] && { echo "$file" | grep -qE "$SKIP" || echo "$(basename "$file")" | grep -qE "$SKIP"; }; then
       continue
     fi
 
