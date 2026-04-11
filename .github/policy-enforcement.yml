@@ -17,6 +17,7 @@
 defaults:
   openai: advisory
   gemini: advisory
+  design-tokens: advisory
 
 # Per-repo overrides. Uncomment and set to `required` when the repo
 # begins calling the API. Repo key is the bare repo name (no owner).

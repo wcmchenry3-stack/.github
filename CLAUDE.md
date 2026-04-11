@@ -45,13 +45,35 @@ A `PreToolUse` hook gates every `gh pr create` call behind a policy check.
 2. Add the detection pattern to `.claude/policies/policy-patterns.json`.
 3. No hook or agent changes needed.
 
-**Current policies:** OpenAI, Wikipedia/Wikimedia, Google Gemini.
+**Current policies:** OpenAI, Wikipedia/Wikimedia, Google Gemini, Design Tokens & Accessibility.
+
+## Design Tokens & Accessibility policy (`called-design-token-check.yml`)
+
+`called-design-token-check.yml` validates that frontend code does not contain:
+- Hard-coded CSS color values (hex, `rgb()`, `rgba()`, `hsl()`, `hsla()`) — use design tokens
+- Hard-coded `font-size` in `px` — use tokens or relative units (`rem`/`em`)
+- Hard-coded `font-family` string literals — use tokens
+- `tabindex` > 0 — breaks natural DOM tab order (WCAG 2.4.3)
+- Event handlers (`onclick`, `onkeydown`, etc.) on non-interactive elements (WCAG 4.1.2)
+- `<img>` without `alt` attribute (WCAG 1.1.1)
+- `aria-hidden="true"` on focusable elements (WCAG 4.1.2)
+
+**Skip patterns** (files excluded from checking):
+`node_modules/`, `dist/`, `build/`, `.cache/`, `coverage/`, `public/`, `tokens/`,
+`*.min.css`, `*.min.js`, `*.stories.*`, `*.test.*`, `*.spec.*`, `__snapshots__/`,
+`*.svg`, `*.md`, `*.mdx`, `*.tokens.json`, `tailwind.config.*`, `theme.*.ts/js`
+
+**Enforcement:** defaults to `advisory` in `.github/policy-enforcement.yml`.
+Flip a repo to `required` under `overrides:` once its frontend is using a design system.
+
+**Policy definition:** `.claude/policies/design-tokens.md` — update alongside the workflow.
 
 ## Org-level policy enforcement (`policy-enforcement.yml`)
 
-`called-openai-policy.yml` and `called-gemini-policy.yml` read
-`.github/policy-enforcement.yml` from this meta-repo at job start to
-decide whether violations **fail the check** or are **advisory only**.
+`called-openai-policy.yml`, `called-gemini-policy.yml`, and
+`called-design-token-check.yml` read `.github/policy-enforcement.yml` from this
+meta-repo at job start to decide whether violations **fail the check** or are
+**advisory only**.
 
 **The model:**
 - Individual repos *inherit* the policy scaffolding (agents, hooks, `.claude/policies/`).
