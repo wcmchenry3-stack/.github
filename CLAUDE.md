@@ -113,6 +113,55 @@ Two mechanisms keep org workflows calibrated against upstream policy changes:
 - Requires secret: `GITHUB_TOKEN` (fine-grained PAT, `issues: write` on this repo)
   — already set via `wrangler secret put GITHUB_TOKEN`.
 
+## Cloudflare Workers
+
+### In-app feedback worker (`cloudflare/feedback-worker/`)
+HTTP Worker deployed to `wcmchenry3.workers.dev`. Receives JSON feedback submissions
+from app UI widgets, validates and enriches them via the Claude API, and opens a GitHub
+issue in the originating repo.
+
+**Endpoint:** `POST /feedback`
+
+**Request body:**
+```json
+{
+  "appId": "gaming_app",        // required — must be in APP_REPO_MAP
+  "title": "string",            // required, max 255 chars
+  "description": "string",      // required, max 10 000 chars
+  "type": "bug" | "feature",    // required
+  "screenshotBase64": "string", // optional, max ~2 MB base64
+  "sessionLogs": "string"       // optional, max 50 000 chars
+}
+```
+
+**Response (201):** `{ "issueNumber": 42, "issueUrl": "https://github.com/..." }`
+
+**Secrets (set via `wrangler secret put <NAME>`):**
+
+| Secret | Description |
+|--------|-------------|
+| `ANTHROPIC_API_KEY` | Anthropic API key — uses `claude-haiku-4-5-20251001` |
+| `GITHUB_TOKEN` | Fine-grained PAT; `issues:write` on `gaming_app` + `book_app`, `gists:write` on token owner account |
+| `ALLOWED_ORIGINS` | Comma-separated allowed app origins, e.g. `https://gaming.wcmchenry3.com,https://book.wcmchenry3.com` |
+| `APP_REPO_MAP` | Comma-separated `appId:org/repo` pairs, e.g. `gaming_app:wcmchenry3-stack/gaming_app,book_app:wcmchenry3-stack/book_app` |
+
+**KV namespace (set in `wrangler.toml` — replace placeholder IDs):**
+```bash
+wrangler kv namespace create RATE_LIMIT_KV
+wrangler kv namespace create RATE_LIMIT_KV --preview
+```
+
+**Adding a new app:**
+1. Add `newapp:wcmchenry3-stack/newapp` to `APP_REPO_MAP` secret.
+2. Add the app's origin to `ALLOWED_ORIGINS` secret.
+3. Redeploy: `wrangler deploy` from `cloudflare/feedback-worker/`.
+4. The `user-feedback` label is auto-created in the target repo on first submission.
+
+**Rate limiting:** 5 submissions per IP per 10 minutes (Cloudflare KV).
+**Content safety:** Claude classifies each submission — spam/abuse returns 422 before any issue is created.
+**Screenshots:** Stored as a private GitHub Gist (`screenshot.b64`); the issue body links to the Gist.
+**Session logs:** Appended as a collapsed `<details>` block in the issue body (truncated at 20 000 chars).
+
 ## Versioning
 
 All org repos use [Semantic Versioning](https://semver.org/) with automated
