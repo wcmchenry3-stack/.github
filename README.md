@@ -40,6 +40,7 @@ All workflows are prefixed `called-` and use `on: workflow_call`. Call them from
 | `called-wikipedia-policy.yml` | Wikimedia API compliance check — restricted to `office_holder_cursor` |
 | `called-design-token-check.yml` | Design tokens and WCAG 2.2 AA checks for frontend code |
 | `called-commitlint.yml` | Enforces Conventional Commits format on PR titles |
+| `called-schema-migration.yml` | Schema/migration change detection, Alembic model sync, backward compat grep |
 
 ## Caller Pattern
 
@@ -89,6 +90,7 @@ by `sync-community-health.yml` whenever they change on `main`.
 | `community-health/workflows/openai-policy.yml` | `.github/workflows/openai-policy.yml` |
 | `community-health/workflows/gemini-policy.yml` | `.github/workflows/gemini-policy.yml` |
 | `community-health/workflows/design-token-check.yml` | `.github/workflows/design-token-check.yml` |
+| `community-health/workflows/schema-migration.yml` | `.github/workflows/schema-migration.yml` |
 
 ## Claude Code Tooling
 

@@ -1,0 +1,12 @@
+name: Schema Migration Check
+
+on:
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  schema-check:
+    uses: wcmchenry3-stack/.github/.github/workflows/called-schema-migration.yml@main
+    with:
+      working-directory: backend
+      python-version: '3.11'

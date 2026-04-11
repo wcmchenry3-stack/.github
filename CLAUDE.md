@@ -197,6 +197,37 @@ These are intentionally repo-specific and should **not** be upstreamed:
 
 All other repos: fully synced, no local additions.
 
+## CI hardening lessons
+
+Lessons from real incidents in org repos — follow these to avoid the fix-the-fix chain anti-pattern.
+
+### Always use `npm ci`, never `npm install`
+
+`npm ci` installs from `package-lock.json` exactly, catching lockfile drift and preventing
+"works locally, breaks in CI" failures. All reusable workflows already enforce this.
+
+### `pod install` requires retry logic
+
+CocoaPods CDN (`cdn.cocoapods.org`) has transient timeouts. Both `called-ios-build-check.yml`
+and `called-ios-e2e.yml` already wrap `pod install` in a 3-attempt retry loop with backoff.
+Any new iOS workflow must include the same pattern.
+
+### Test CI scripts against a clean environment first
+
+Lesson from gaming_app PRs #82–#86 — five consecutive PRs each fixing a side effect of the
+previous one (missing Node.js on runner, wrong PATH, circular symlink). One test on a fresh
+runner would have caught all of it. Before merging a new workflow:
+
+1. Run it on a throwaway branch against a real runner.
+2. Verify it starts from a clean state (no cached `node_modules`, no existing Pods).
+3. Batch all fixes into one PR — never chain "fix the fix" PRs.
+
+### Never use `npm install` in Render deploy scripts
+
+Render's build environment mirrors `npm ci` behavior. Using `npm install` in a deploy
+script can silently resolve different versions than CI tested against. The
+`called-render-preflight.yml` workflow explicitly validates this before deploy.
+
 ## Conventions
 
 - Workflows are prefixed `called-` and use `workflow_call` triggers.

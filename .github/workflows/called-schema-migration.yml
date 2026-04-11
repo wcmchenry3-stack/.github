@@ -1,0 +1,152 @@
+name: Schema Migration Check
+
+# Validates schema and migration file changes on PRs.
+# Only runs when schema/migration/model files are actually touched — cheap on normal PRs.
+#
+# Checks performed when schema files change:
+#   1. Alembic model sync  — `alembic check` ensures every model change has a migration
+#   2. Backward compat     — scans new migration files for dangerous patterns
+#      (DROP COLUMN, NOT NULL without DEFAULT, column renames without deprecation)
+#
+# Caller pattern:
+#   jobs:
+#     schema-check:
+#       uses: wcmchenry3-stack/.github/.github/workflows/called-schema-migration.yml@main
+#       with:
+#         working-directory: backend      # directory containing alembic.ini
+#         python-version: '3.11'          # optional, default '3.11'
+#
+# Applies to repos with Alembic migrations. For SQLAlchemy-only repos (no alembic.ini),
+# the alembic-check step is skipped and only the backward-compat grep runs.
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: 'Directory containing alembic.ini (or models if no Alembic)'
+        type: string
+        default: '.'
+      python-version:
+        description: 'Python version'
+        type: string
+        default: '3.11'
+
+jobs:
+  schema-migration:
+    name: Schema migration check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0     # full history needed to diff against base branch
+
+      # ------------------------------------------------------------------
+      # 1. Detect whether schema/migration/model files changed in this PR
+      # ------------------------------------------------------------------
+      - name: Detect schema changes
+        id: detect
+        run: |
+          BASE="${{ github.event.pull_request.base.sha }}"
+          HEAD="${{ github.event.pull_request.head.sha }}"
+
+          CHANGED=$(git diff --name-only "$BASE" "$HEAD" 2>/dev/null \
+            | grep -iE '(migration|alembic|models?\.py|schema\.py|schema\.sql|\.sql)' \
+            | grep -v '__pycache__' \
+            || true)
+
+          if [ -n "$CHANGED" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Schema-related files changed:"
+            echo "$CHANGED"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No schema/migration files changed — skipping checks."
+          fi
+
+      # ------------------------------------------------------------------
+      # 2. Alembic model sync check
+      #    `alembic check` exits non-zero if the model is ahead of migrations
+      # ------------------------------------------------------------------
+      - name: Set up Python
+        if: steps.detect.outputs.changed == 'true'
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Install dependencies
+        if: steps.detect.outputs.changed == 'true'
+        run: pip install -r requirements.txt
+        working-directory: ${{ inputs.working-directory }}
+
+      - name: Alembic model sync check
+        if: steps.detect.outputs.changed == 'true'
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          # Alembic needs a DB URL — use SQLite in-memory for the sync check
+          DATABASE_URL: "sqlite:///./test_migration_check.db"
+        run: |
+          if [ ! -f alembic.ini ]; then
+            echo "No alembic.ini found — skipping Alembic check (SQLAlchemy-only repo)."
+            exit 0
+          fi
+
+          echo "Running alembic upgrade to apply all migrations..."
+          alembic upgrade head
+
+          echo "Running alembic check to verify model matches migrations..."
+          if ! alembic check; then
+            echo ""
+            echo "::error::Model and migrations are out of sync."
+            echo "::error::A model was changed without a corresponding migration file."
+            echo "::error::Run: alembic revision --autogenerate -m 'describe_your_change'"
+            exit 1
+          fi
+
+          echo "Model and migrations are in sync."
+
+      # ------------------------------------------------------------------
+      # 3. Backward compatibility grep
+      #    Scans new migration files for patterns that would break on Render
+      #    (Render deploys new code before running migrations — old code must
+      #    still work against the new schema for the window between deploys)
+      # ------------------------------------------------------------------
+      - name: Backward compatibility check
+        if: steps.detect.outputs.changed == 'true'
+        run: |
+          BASE="${{ github.event.pull_request.base.sha }}"
+          HEAD="${{ github.event.pull_request.head.sha }}"
+
+          # Only scan lines added in this PR (+lines in new migration files)
+          NEW_MIGRATION_LINES=$(git diff "$BASE" "$HEAD" \
+            -- '*.py' '*.sql' \
+            | grep '^+' | grep -v '^+++' || true)
+
+          FAILURES=0
+
+          # DROP COLUMN — old code still reads the column during deploy window
+          if echo "$NEW_MIGRATION_LINES" | grep -iqE "op\.drop_column|DROP COLUMN"; then
+            echo "::warning::DROP COLUMN detected. Ensure old code no longer references this column before this migration runs. Use a two-phase approach: remove code reference first, then drop column in a follow-up migration."
+          fi
+
+          # NOT NULL column without server_default — will fail on existing rows
+          if echo "$NEW_MIGRATION_LINES" | grep -iqE "nullable=False" && \
+             ! echo "$NEW_MIGRATION_LINES" | grep -iqE "server_default|default="; then
+            echo "::error::NOT NULL column added without a server_default or default value."
+            echo "::error::Existing rows will fail the constraint. Add server_default='' or make the column nullable first."
+            FAILURES=$((FAILURES + 1))
+          fi
+
+          # Column rename without deprecation (drop + add in same migration)
+          if echo "$NEW_MIGRATION_LINES" | grep -iqE "op\.drop_column" && \
+             echo "$NEW_MIGRATION_LINES" | grep -iqE "op\.add_column"; then
+            echo "::warning::Column rename pattern detected (drop + add in same migration). Ensure old code does not reference the dropped column during the deploy window."
+          fi
+
+          if [ "$FAILURES" -gt 0 ]; then
+            echo ""
+            echo "::error::$FAILURES backward compatibility issue(s) found. Fix before merging — Render deploys new code before running migrations."
+            exit 1
+          fi
+
+          echo "Backward compatibility check passed."
