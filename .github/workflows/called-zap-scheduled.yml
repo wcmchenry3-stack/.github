@@ -12,6 +12,13 @@ on:
         description: 'Name for the uploaded ZAP report artifact'
         type: string
         required: true
+      branches:
+        description: >
+          Comma-separated list of branches that should run the scan.
+          Leave empty to always run (default). Example: "main,dev"
+        type: string
+        required: false
+        default: ''
 
 jobs:
   zap-scan:
@@ -22,15 +29,28 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+      - name: Guard – branch filter
+        id: guard
+        run: |
+          BRANCHES="${{ inputs.branches }}"
+          CURRENT="${{ github.ref_name }}"
+          if [ -z "$BRANCHES" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          elif echo "$BRANCHES" | tr ',' '\n' | sed 's/^ *//;s/ *$//' | grep -qxF "$CURRENT"; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "⏭ Skipping ZAP scan: branch '$CURRENT' not in [$BRANCHES]"
+          fi
       - name: Run ZAP baseline scan
-        if: ${{ inputs.target-url != '' }}
+        if: ${{ steps.guard.outputs.run == 'true' && inputs.target-url != '' }}
         uses: zaproxy/action-baseline@v0.15.0
         with:
           target: ${{ inputs.target-url }}
           fail_action: false
       - name: Upload ZAP report
         uses: actions/upload-artifact@v4
-        if: ${{ inputs.target-url != '' }}
+        if: ${{ steps.guard.outputs.run == 'true' && inputs.target-url != '' }}
         with:
           name: ${{ inputs.artifact-name }}-${{ github.run_id }}
           path: report_html.html
