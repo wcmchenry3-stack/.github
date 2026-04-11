@@ -1,0 +1,40 @@
+name: Smoke Test — feedback-worker
+
+on:
+  workflow_dispatch:
+    inputs:
+      worker-url:
+        description: 'Worker base URL (no trailing slash)'
+        required: false
+        default: 'https://feedback-worker.wcmchenry3.workers.dev'
+
+jobs:
+  smoke-test:
+    name: Smoke test deployed worker
+    runs-on: ubuntu-latest
+    steps:
+      - name: Health check
+        run: |
+          echo "Hitting ${{ inputs.worker-url }}/health"
+          curl -sf "${{ inputs.worker-url }}/health" | tee /tmp/health.json
+          jq -e '.status == "ok"' /tmp/health.json
+
+      - name: Verify CORS rejection from unknown origin
+        run: |
+          status=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST "${{ inputs.worker-url }}/feedback" \
+            -H "Origin: https://evil.example.com" \
+            -H "Content-Type: application/json" \
+            -d '{"appId":"gaming_app","title":"t","description":"d","type":"bug"}')
+          echo "Got $status (expected 403)"
+          [ "$status" = "403" ]
+
+      - name: Verify input validation
+        run: |
+          status=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST "${{ inputs.worker-url }}/feedback" \
+            -H "Origin: https://dev-games.buffingchi.com" \
+            -H "Content-Type: application/json" \
+            -d '{"title":"missing appId"}')
+          echo "Got $status (expected 400)"
+          [ "$status" = "400" ]

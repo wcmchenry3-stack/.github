@@ -1,0 +1,21 @@
+name: CI — Cloudflare Workers
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'cloudflare/**'
+      - '.github/workflows/ci-cloudflare-workers.yml'
+      - '.github/workflows/called-test-cloudflare-worker.yml'
+  pull_request:
+    paths:
+      - 'cloudflare/**'
+      - '.github/workflows/ci-cloudflare-workers.yml'
+      - '.github/workflows/called-test-cloudflare-worker.yml'
+
+jobs:
+  test-feedback-worker:
+    name: feedback-worker
+    uses: ./.github/workflows/called-test-cloudflare-worker.yml
+    with:
+      working-directory: cloudflare/feedback-worker

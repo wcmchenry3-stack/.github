@@ -11,6 +11,13 @@ export default {
     }
 
     const url = new URL(request.url);
+    if (request.method === 'GET' && url.pathname === '/health') {
+      return new Response(JSON.stringify({ status: 'ok', worker: 'feedback-worker' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
     if (request.method === 'POST' && url.pathname === '/feedback') {
       return handleFeedback(request, env);
     }

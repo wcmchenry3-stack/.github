@@ -96,6 +96,20 @@ function mockFetch({ claudeIsValid = true, claudeRejectionReason = null, issueNu
 }
 
 // ---------------------------------------------------------------------------
+// Health endpoint
+
+describe('worker.fetch — /health', () => {
+  it('GET /health returns 200 with status ok', async () => {
+    const req = new Request('https://feedback.example.com/health', { method: 'GET' });
+    const resp = await worker.fetch(req, makeEnv());
+    expect(resp.status).toBe(200);
+    const body = await resp.json();
+    expect(body.status).toBe('ok');
+    expect(body.worker).toBe('feedback-worker');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // parseRepoMap
 
 describe('parseRepoMap', () => {
