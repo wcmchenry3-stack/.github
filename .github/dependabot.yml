@@ -1,0 +1,25 @@
+version: 2
+
+updates:
+  # GitHub Actions — keep workflow action versions current
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    commit-message:
+      prefix: "chore"
+    labels:
+      - "dependencies"
+      - "ci"
+
+  # Cloudflare Email Worker (Node.js)
+  - package-ecosystem: "npm"
+    directory: "/cloudflare/openai-policy-worker"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    commit-message:
+      prefix: "chore"
+    labels:
+      - "dependencies"

@@ -1,6 +1,19 @@
 # wcmchenry3-stack/.github
 
-Shared GitHub Actions reusable workflows and community health files for all `wcmchenry3-stack` repositories.
+Shared GitHub Actions workflows, community health files, and Claude Code
+configuration for the **wcmchenry3-stack** organization.
+
+## Repo purpose
+
+This is a meta-repository. It does not contain application code. It provides:
+
+- **Reusable CI/CD workflows** (`.github/workflows/called-*.yml`) — called from individual repos via `workflow_call`
+- **Community health files** (`community-health/`) — synced to all org repos via `sync-community-health.yml`
+- **Claude Code agents, hooks, and settings** (`.claude/`) — synced to all org repos via `sync-community-health.yml`
+- **Org-level policy enforcement** — controls whether policy violations fail checks or are advisory-only
+
+> **Note:** Community health files and Claude Code tooling do **not** auto-apply to org repos.
+> They are explicitly pushed to each repo by `sync-community-health.yml` on every merge to `main`.
 
 ## Reusable Workflows
 
@@ -18,12 +31,15 @@ All workflows are prefixed `called-` and use `on: workflow_call`. Call them from
 | `called-build-frontend.yml` | `npm run build` |
 | `called-cve-python.yml` | pip-audit |
 | `called-cve-frontend.yml` | npm audit --audit-level=high |
-| `called-perf-frontend.yml` | Lighthouse CI — audits built dist, uploads results as artifacts (informational) |
+| `called-perf-frontend.yml` | Lighthouse CI — audits built dist, uploads results as artifacts |
 | `called-perf-backend.yml` | Locust load test against a live URL with threshold assertions |
 | `called-deploy-render.yml` | Render deploy hook + ZAP post-deploy scan |
 | `called-zap-scheduled.yml` | ZAP baseline scan (caller owns the schedule) |
+| `called-openai-policy.yml` | OpenAI API compliance check |
+| `called-gemini-policy.yml` | Google Gemini API compliance check |
 | `called-wikipedia-policy.yml` | Wikimedia API compliance check — restricted to `office_holder_cursor` |
-| `called-openai-policy.yml` | OpenAI API compliance check — restricted to permitted repos (comma-separated list) |
+| `called-design-token-check.yml` | Design tokens and WCAG 2.2 AA checks for frontend code |
+| `called-commitlint.yml` | Enforces Conventional Commits format on PR titles |
 
 ## Caller Pattern
 
@@ -52,32 +68,58 @@ Some workflows are repo-scoped and will fail immediately if called from any othe
 | Workflow | Permitted repos | Reason |
 |----------|----------------|--------|
 | `called-wikipedia-policy.yml` | `wcmchenry3-stack/office_holder_cursor` | Only repo using the Wikimedia API |
-| `called-openai-policy.yml` | `wcmchenry3-stack/office_holder_cursor`, `wcmchenry3-stack/book_app` | Repos using the OpenAI API |
+| `called-openai-policy.yml` | configurable via `allowed-repos` input | Repos using the OpenAI API |
 
-**Caller pattern for `office_holder_cursor` (Wikipedia):**
+## Community Health Files
 
-```yaml
-jobs:
-  wikipedia-policy:
-    uses: wcmchenry3-stack/.github/.github/workflows/called-wikipedia-policy.yml@main
-    with:
-      allowed-repo: 'wcmchenry3-stack/office_holder_cursor'
-```
+Community health files live in `community-health/` and are **synced to all org repos**
+by `sync-community-health.yml` whenever they change on `main`.
 
-**Caller pattern for OpenAI repos:**
+| File | Synced to (dest) |
+|------|-----------------|
+| `community-health/SECURITY.md` | `SECURITY.md` |
+| `community-health/CODE_OF_CONDUCT.md` | `CODE_OF_CONDUCT.md` |
+| `community-health/CONTRIBUTING.md` | `CONTRIBUTING.md` |
+| `community-health/SUPPORT.md` | `SUPPORT.md` |
+| `community-health/PULL_REQUEST_TEMPLATE.md` | `.github/PULL_REQUEST_TEMPLATE.md` |
+| `community-health/ISSUE_TEMPLATE/bug_report.md` | `.github/ISSUE_TEMPLATE/bug_report.md` |
+| `community-health/ISSUE_TEMPLATE/feature_request.md` | `.github/ISSUE_TEMPLATE/feature_request.md` |
+| `community-health/workflows/commitlint.yml` | `.github/workflows/commitlint.yml` |
+| `community-health/workflows/release-please.yml` | `.github/workflows/release-please.yml` |
+| `community-health/workflows/openai-policy.yml` | `.github/workflows/openai-policy.yml` |
+| `community-health/workflows/gemini-policy.yml` | `.github/workflows/gemini-policy.yml` |
+| `community-health/workflows/design-token-check.yml` | `.github/workflows/design-token-check.yml` |
 
-```yaml
-jobs:
-  openai-policy:
-    uses: wcmchenry3-stack/.github/.github/workflows/called-openai-policy.yml@main
-    with:
-      allowed-repos: 'wcmchenry3-stack/office_holder_cursor,wcmchenry3-stack/book_app'
-```
+## Claude Code Tooling
 
-To add a new OpenAI-using repo: append `,wcmchenry3-stack/new-repo` to `allowed-repos` in the caller — no changes needed to the workflow itself.
+Claude Code hooks, agents, policies, and settings are also synced to all org repos
+by `sync-community-health.yml`.
 
-Companion scheduled workflows run on the 1st of each month to detect policy page changes and open a GitHub issue here if updates are found. Both support `workflow_dispatch` for on-demand checks.
+| Source (this repo) | Synced to (dest) |
+|--------------------|-----------------|
+| `.claude/hooks/lint-on-edit.sh` | `.claude/hooks/lint-on-edit.sh` |
+| `.claude/hooks/lint-gate.sh` | `.claude/hooks/lint-gate.sh` |
+| `.claude/hooks/policy-gate.sh` | `.claude/hooks/policy-gate.sh` |
+| `.claude/agents/plan-issues.md` | `.claude/agents/plan-issues.md` |
+| `.claude/agents/lint-review.md` | `.claude/agents/lint-review.md` |
+| `.claude/agents/policy-compliance.md` | `.claude/agents/policy-compliance.md` |
+| `.claude/policies/policy-patterns.json` | `.claude/policies/policy-patterns.json` |
+| `.claude/policies/openai.md` | `.claude/policies/openai.md` |
+| `.claude/policies/gemini.md` | `.claude/policies/gemini.md` |
+| `.claude/policies/wikipedia.md` | `.claude/policies/wikipedia.md` |
+| `.claude/policies/claude.md` | `.claude/policies/claude.md` |
+| `.claude/policies/design-tokens.md` | `.claude/policies/design-tokens.md` |
+| `.claude/settings.json` _(hooks only)_ | `.claude/settings.json` _(merged, not overwritten)_ |
 
-## Community Files
+The `settings.json` sync merges only the `PreToolUse` and `PostToolUse` hook arrays —
+repo-specific settings are preserved.
 
-`PULL_REQUEST_TEMPLATE.md`, `ISSUE_TEMPLATE/`, and `SECURITY.md` auto-apply to all repos in this account that don't override them.
+## Policy Enforcement
+
+`policy-enforcement.yml` (in `.github/`) controls whether policy check failures
+**block PRs** or are **advisory only**.
+
+- Default: `advisory` — violations are annotated in the PR UI but do not fail the check.
+- Set a repo to `required` under `overrides:` once it actively uses the API in question.
+
+See [`CLAUDE.md`](CLAUDE.md) for full details on adding new policies and the enforcement model.

@@ -1,0 +1,7 @@
+# CODEOWNERS — wcmchenry3-stack/.github
+#
+# All files in this meta-repo require review from the org owner.
+# This ensures no workflow, hook, policy, or community health file
+# changes land without explicit sign-off.
+
+* @wcmchenry3-stack
