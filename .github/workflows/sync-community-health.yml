@@ -1,0 +1,173 @@
+name: Sync Community Health Files
+
+# Runs whenever the canonical community-health/ files change on main, or on
+# manual dispatch. Opens a PR in each target repo when content differs.
+#
+# Required secret: COMMUNITY_HEALTH_SYNC_PAT
+#   Fine-grained PAT with Contents: write + Pull requests: write on all repos
+#   listed in the matrix below. A classic PAT with `repo` scope also works.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'community-health/**'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Open PRs even if files are already up-to-date'
+        type: boolean
+        default: false
+
+jobs:
+  sync:
+    name: Sync → ${{ matrix.repo }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        repo:
+          - gaming_app
+          - office_holder_cursor
+          - book_app
+          - powerplayshistory_site
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sync files to ${{ matrix.repo }}
+        env:
+          GH_TOKEN: ${{ secrets.COMMUNITY_HEALTH_SYNC_PAT }}
+          REPO: wcmchenry3-stack/${{ matrix.repo }}
+          FORCE: ${{ inputs.force || 'false' }}
+        run: |
+          python3 - << 'PYEOF'
+          import os, json, base64, urllib.request, urllib.error, sys
+
+          REPO    = os.environ['REPO']
+          TOKEN   = os.environ['GH_TOKEN']
+          FORCE   = os.environ.get('FORCE', 'false').lower() == 'true'
+          BRANCH  = 'chore/sync-community-health'
+          API     = 'https://api.github.com'
+
+          FILE_MAP = {
+              'community-health/SECURITY.md':
+                  'SECURITY.md',
+              'community-health/PULL_REQUEST_TEMPLATE.md':
+                  '.github/PULL_REQUEST_TEMPLATE.md',
+              'community-health/ISSUE_TEMPLATE/bug_report.md':
+                  '.github/ISSUE_TEMPLATE/bug_report.md',
+              'community-health/ISSUE_TEMPLATE/feature_request.md':
+                  '.github/ISSUE_TEMPLATE/feature_request.md',
+          }
+
+          def api(path, method='GET', body=None):
+              url = f'{API}{path}'
+              data = json.dumps(body).encode() if body is not None else None
+              req = urllib.request.Request(url, data=data, method=method)
+              req.add_header('Authorization', f'Bearer {TOKEN}')
+              req.add_header('Accept', 'application/vnd.github+json')
+              req.add_header('X-GitHub-Api-Version', '2022-11-28')
+              if data:
+                  req.add_header('Content-Type', 'application/json')
+              try:
+                  with urllib.request.urlopen(req) as r:
+                      return {} if r.status == 204 else json.loads(r.read())
+              except urllib.error.HTTPError as e:
+                  if e.code == 404:
+                      return None
+                  msg = e.read().decode()
+                  print(f'  HTTP {e.code} {method} {path}: {msg}', file=sys.stderr)
+                  sys.exit(1)
+
+          # -- Resolve default branch -----------------------------------------
+          repo_info     = api(f'/repos/{REPO}')
+          default_branch = repo_info['default_branch']
+          print(f'{REPO} (default branch: {default_branch})')
+
+          # -- Diff each file ---------------------------------------------------
+          needs_update = []
+          for src, dest in FILE_MAP.items():
+              new_content = open(src).read()
+              current     = api(f'/repos/{REPO}/contents/{dest}?ref={default_branch}')
+              if current is None:
+                  print(f'  {dest}: missing → will add')
+                  needs_update.append((src, dest, new_content))
+              else:
+                  existing = base64.b64decode(
+                      current['content'].replace('\n', '')
+                  ).decode()
+                  if new_content != existing or FORCE:
+                      print(f'  {dest}: differs → will update')
+                      needs_update.append((src, dest, new_content))
+                  else:
+                      print(f'  {dest}: up-to-date')
+
+          if not needs_update:
+              print('  Nothing to sync.')
+              sys.exit(0)
+
+          # -- Guard against duplicate open PRs ---------------------------------
+          open_prs = api(
+              f'/repos/{REPO}/pulls'
+              f'?state=open&head=wcmchenry3-stack:{BRANCH}'
+          )
+          if open_prs:
+              print(f'  Open sync PR already exists — skipping.')
+              sys.exit(0)
+
+          # -- Reset sync branch ------------------------------------------------
+          stale = api(f'/repos/{REPO}/git/refs/heads/{BRANCH}')
+          if stale:
+              api(f'/repos/{REPO}/git/refs/heads/{BRANCH}', method='DELETE')
+              print(f'  Removed stale branch.')
+
+          base_sha = api(
+              f'/repos/{REPO}/git/refs/heads/{default_branch}'
+          )['object']['sha']
+
+          api(f'/repos/{REPO}/git/refs', method='POST', body={
+              'ref': f'refs/heads/{BRANCH}',
+              'sha': base_sha,
+          })
+          print(f'  Created branch {BRANCH}.')
+
+          # -- Commit each file -------------------------------------------------
+          for src, dest, content in needs_update:
+              encoded      = base64.b64encode(content.encode()).decode()
+              on_branch    = api(f'/repos/{REPO}/contents/{dest}?ref={BRANCH}')
+              commit_body  = {
+                  'message': 'chore: sync community health files from org template',
+                  'content': encoded,
+                  'branch':  BRANCH,
+              }
+              if on_branch:
+                  commit_body['sha'] = on_branch['sha']
+              api(f'/repos/{REPO}/contents/{dest}', method='PUT', body=commit_body)
+              print(f'  Committed {dest}')
+
+          # -- Open PR ----------------------------------------------------------
+          pr_body = (
+              'Automated sync of community health files from '
+              '`wcmchenry3-stack/.github`.\n\n'
+              '## Files synced\n'
+              '- `SECURITY.md`\n'
+              '- `.github/PULL_REQUEST_TEMPLATE.md`\n'
+              '- `.github/ISSUE_TEMPLATE/bug_report.md`\n'
+              '- `.github/ISSUE_TEMPLATE/feature_request.md`\n\n'
+              '_Auto-generated by `sync-community-health.yml`. '
+              'Review and merge to apply the update._'
+          )
+
+          pr = api(f'/repos/{REPO}/pulls', method='POST', body={
+              'title': 'chore: sync community health files from org template',
+              'head':  BRANCH,
+              'base':  default_branch,
+              'body':  pr_body,
+          })
+          if pr:
+              print(f'  PR opened: {pr["html_url"]}')
+          else:
+              print('  Failed to open PR.', file=sys.stderr)
+              sys.exit(1)
+          PYEOF
