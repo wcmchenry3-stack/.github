@@ -165,6 +165,38 @@ in the target repo via a PR. Merge the PR, then release-please is active.
 | `release-please-config.json` | release-please behaviour (release type, CHANGELOG sections) |
 | `.release-please-manifest.json` | current version tracker — do not edit manually except to cut 1.0.0 |
 
+## Audit script (`scripts/audit-claude-config.sh`)
+
+`scripts/audit-claude-config.sh` compares the `.claude/` contents of each target
+repo against the FILE_MAP in `sync-community-health.yml`. Run it periodically to
+catch sync drift or local additions that should be upstreamed.
+
+```bash
+./scripts/audit-claude-config.sh              # full audit, all 6 repos
+./scripts/audit-claude-config.sh --json       # machine-readable output
+./scripts/audit-claude-config.sh --repos gaming_app,book_app   # subset
+```
+
+Requires: `gh` CLI authenticated, `jq`.
+
+### Audit findings (2026-04-11)
+
+All 6 target repos have zero sync gaps — every FILE_MAP entry is present.
+
+**`wcm_portfolio_site`** has 6 extra `.claude/` files not in the FILE_MAP.
+These are intentionally repo-specific and should **not** be upstreamed:
+
+| File | Reason excluded |
+|------|----------------|
+| `.claude/accessibility.md` | Portfolio-specific color palette and focus ring rules |
+| `.claude/code-style.md` | Portfolio file naming, named-export convention, Tailwind class order |
+| `.claude/git-workflow.md` | Portfolio pre-commit command sequence |
+| `.claude/i18n.md` | Portfolio locale list (13 locales) and i18next namespace map |
+| `.claude/testing.md` | Portfolio component test case catalogue |
+| `.claude/translation-philosophy.md` | Bill McHenry brand/marketing translation brief |
+
+All other repos: fully synced, no local additions.
+
 ## Conventions
 
 - Workflows are prefixed `called-` and use `workflow_call` triggers.
