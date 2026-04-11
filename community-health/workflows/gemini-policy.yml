@@ -1,0 +1,10 @@
+name: Gemini API Policy Check
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+    branches: [main, dev]
+
+jobs:
+  gemini-policy-check:
+    uses: wcmchenry3-stack/.github/.github/workflows/called-gemini-policy.yml@main

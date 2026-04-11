@@ -1,0 +1,10 @@
+name: OpenAI API Policy Check
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+    branches: [main, dev]
+
+jobs:
+  openai-policy-check:
+    uses: wcmchenry3-stack/.github/.github/workflows/called-openai-policy.yml@main
