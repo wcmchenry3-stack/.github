@@ -1,0 +1,66 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "feedback-widget-tokens",
+  "title": "Feedback Widget Design Token Contract",
+  "description": "Machine-readable schema for all CSS custom properties consumed by the feedback widget. Each app must map its own design tokens to these properties in a feedback-theme.css file.",
+  "type": "object",
+  "properties": {
+    "color": {
+      "type": "object",
+      "description": "Color tokens",
+      "properties": {
+        "--feedback-color-background":       { "description": "Widget container background", "fallback": "#ffffff", "required": true, "mustMatchAppDesignSystem": true },
+        "--feedback-color-background-input": { "description": "Text input / textarea background", "fallback": "#ffffff", "required": true, "mustMatchAppDesignSystem": true },
+        "--feedback-color-text-primary":     { "description": "Primary text — labels, body copy", "fallback": "#111827", "required": true, "mustMatchAppDesignSystem": true },
+        "--feedback-color-text-secondary":   { "description": "Secondary text — hints, placeholders, character counts", "fallback": "#6b7280", "required": true, "mustMatchAppDesignSystem": true },
+        "--feedback-color-text-on-primary":  { "description": "Text rendered on top of the primary action button", "fallback": "#ffffff", "required": true, "mustMatchAppDesignSystem": true },
+        "--feedback-color-border":           { "description": "Default input border", "fallback": "#d1d5db", "required": true, "mustMatchAppDesignSystem": false },
+        "--feedback-color-border-focus":     { "description": "Input border when focused", "fallback": "#2563eb", "required": true, "mustMatchAppDesignSystem": false },
+        "--feedback-color-focus-ring":       { "description": "Keyboard focus outline — must meet WCAG 2.4.11 (3:1 contrast against adjacent colours)", "fallback": "#2563eb", "required": true, "mustMatchAppDesignSystem": false },
+        "--feedback-color-error":            { "description": "Error state — border colour and inline error text", "fallback": "#dc2626", "required": true, "mustMatchAppDesignSystem": false },
+        "--feedback-color-error-background": { "description": "Error message banner background", "fallback": "#fef2f2", "required": false, "mustMatchAppDesignSystem": false },
+        "--feedback-color-success":          { "description": "Success state — confirmation message text and icon", "fallback": "#16a34a", "required": true, "mustMatchAppDesignSystem": false },
+        "--feedback-color-primary":          { "description": "Primary action button background (Submit)", "fallback": "#2563eb", "required": true, "mustMatchAppDesignSystem": true },
+        "--feedback-color-primary-hover":    { "description": "Primary button background on hover/active", "fallback": "#1d4ed8", "required": true, "mustMatchAppDesignSystem": true },
+        "--feedback-color-overlay":          { "description": "Modal backdrop / overlay tint", "fallback": "rgba(0,0,0,0.5)", "required": true, "mustMatchAppDesignSystem": false }
+      }
+    },
+    "typography": {
+      "type": "object",
+      "description": "Typography tokens",
+      "properties": {
+        "--feedback-font-family":       { "description": "Widget font stack — must match app body font", "fallback": "system-ui, sans-serif", "required": true, "mustMatchAppDesignSystem": true },
+        "--feedback-font-size-heading": { "description": "Widget title / section heading — use rem", "fallback": "1.125rem", "required": true, "mustMatchAppDesignSystem": false },
+        "--feedback-font-size-body":    { "description": "Body copy, textarea input text — use rem", "fallback": "1rem", "required": true, "mustMatchAppDesignSystem": false },
+        "--feedback-font-size-label":   { "description": "Form field labels — use rem", "fallback": "0.875rem", "required": true, "mustMatchAppDesignSystem": false },
+        "--feedback-font-size-small":   { "description": "Helper text, character count, footnotes — use rem", "fallback": "0.75rem", "required": true, "mustMatchAppDesignSystem": false },
+        "--feedback-font-weight-normal": { "description": "Regular weight for body text", "fallback": "400", "required": true, "mustMatchAppDesignSystem": false },
+        "--feedback-font-weight-medium": { "description": "Medium weight for labels and secondary headings", "fallback": "500", "required": false, "mustMatchAppDesignSystem": false },
+        "--feedback-font-weight-bold":   { "description": "Bold weight for widget title", "fallback": "600", "required": true, "mustMatchAppDesignSystem": false },
+        "--feedback-line-height-body":   { "description": "Line height for body copy and textarea input", "fallback": "1.5", "required": true, "mustMatchAppDesignSystem": false }
+      }
+    },
+    "spacing": {
+      "type": "object",
+      "description": "Spacing tokens",
+      "properties": {
+        "--feedback-spacing-xs": { "description": "Tight internal spacing — ~4px", "fallback": "0.25rem", "required": false, "mustMatchAppDesignSystem": false },
+        "--feedback-spacing-sm": { "description": "Small gap between label and input, button icon gap — ~8px", "fallback": "0.5rem", "required": true, "mustMatchAppDesignSystem": false },
+        "--feedback-spacing-md": { "description": "Default internal padding, gap between form fields — ~16px", "fallback": "1rem", "required": true, "mustMatchAppDesignSystem": false },
+        "--feedback-spacing-lg": { "description": "Widget container padding, section spacing — ~24px", "fallback": "1.5rem", "required": true, "mustMatchAppDesignSystem": false },
+        "--feedback-spacing-xl": { "description": "Large outer spacing, e.g. gap between heading and form — ~32px", "fallback": "2rem", "required": false, "mustMatchAppDesignSystem": false },
+        "--feedback-border-radius-sm": { "description": "Chip / badge border radius", "fallback": "0.25rem", "required": false, "mustMatchAppDesignSystem": false },
+        "--feedback-border-radius-md": { "description": "Input and button border radius", "fallback": "0.375rem", "required": true, "mustMatchAppDesignSystem": true },
+        "--feedback-border-radius-lg": { "description": "Widget modal container border radius", "fallback": "0.75rem", "required": true, "mustMatchAppDesignSystem": true }
+      }
+    },
+    "motion": {
+      "type": "object",
+      "description": "Motion / animation tokens — honour prefers-reduced-motion in implementation",
+      "properties": {
+        "--feedback-transition-duration": { "description": "Default transition duration for hover/focus/open states", "fallback": "150ms", "required": false, "mustMatchAppDesignSystem": false },
+        "--feedback-transition-easing":   { "description": "Default easing function", "fallback": "ease-in-out", "required": false, "mustMatchAppDesignSystem": false }
+      }
+    }
+  }
+}

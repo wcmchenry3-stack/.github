@@ -157,10 +157,11 @@ wrangler kv namespace create RATE_LIMIT_KV --preview
 3. Redeploy: `wrangler deploy` from `cloudflare/feedback-worker/`.
 4. The `user-feedback` label is auto-created in the target repo on first submission.
 
-**Rate limiting:** 5 submissions per IP per 10 minutes (Cloudflare KV).
-**Content safety:** Claude classifies each submission — spam/abuse returns 422 before any issue is created.
+**Rate limiting:** 5 submissions per IP per 10 minutes + 50/min per appId burst limit (Cloudflare KV).
+**Content safety:** Claude classifies each submission — spam/abuse/PII/prompt-injection returns 422 before any issue is created.
 **Screenshots:** Stored as a private GitHub Gist (`screenshot.b64`); the issue body links to the Gist.
 **Session logs:** Appended as a collapsed `<details>` block in the issue body (truncated at 20 000 chars).
+**Theme contract:** Each app skins the widget via `frontend/feedback-theme.css` — see [`.claude/policies/feedback-widget-tokens.md`](.claude/policies/feedback-widget-tokens.md) for the full token reference and new-app integration checklist.
 
 ## Versioning
 
