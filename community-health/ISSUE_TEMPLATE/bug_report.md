@@ -5,9 +5,11 @@ labels: bug
 ---
 
 ## Description
+
 <!-- Clear, concise description of the bug -->
 
 ## Steps to reproduce
+
 1.
 2.
 3.
@@ -17,9 +19,11 @@ labels: bug
 ## Actual behaviour
 
 ## Environment
+
 - OS:
 - Browser / runtime:
 - Version / branch:
 
 ## Logs / screenshots
+
 <!-- Paste relevant logs or attach screenshots -->
