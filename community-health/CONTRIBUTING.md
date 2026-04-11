@@ -28,17 +28,17 @@ PR titles (which become the squash-merge commit message) must follow:
 <type>[!]: <subject>
 ```
 
-| Type | When to use |
-|------|-------------|
-| `feat` | New feature or behavior |
-| `fix` | Bug fix |
-| `chore` | Tooling, deps, config — no behavior change |
-| `docs` | Documentation only |
-| `test` | Adding or updating tests |
+| Type       | When to use                                 |
+| ---------- | ------------------------------------------- |
+| `feat`     | New feature or behavior                     |
+| `fix`      | Bug fix                                     |
+| `chore`    | Tooling, deps, config — no behavior change  |
+| `docs`     | Documentation only                          |
+| `test`     | Adding or updating tests                    |
 | `refactor` | Code change that is neither fix nor feature |
-| `ci` | CI/CD changes |
-| `perf` | Performance improvement |
-| `style` | Formatting, whitespace |
+| `ci`       | CI/CD changes                               |
+| `perf`     | Performance improvement                     |
+| `style`    | Formatting, whitespace                      |
 
 Append `!` after the type (e.g. `feat!:`) to signal a breaking change.
 

@@ -1,6 +1,7 @@
 # OpenAI API Policy
 
 Policy references (calibrated against CI workflow `called-openai-policy.yml`):
+
 - https://openai.com/policies/usage-policies
 - https://openai.com/policies/terms-of-use
 - https://platform.openai.com/docs/guides/rate-limits

@@ -1,6 +1,7 @@
 # Design Tokens & Accessibility Policy
 
 Policy references:
+
 - https://www.w3.org/TR/WCAG22/ (WCAG 2.2)
 - https://www.w3.org/WAI/ARIA/apg/ (ARIA Authoring Practices)
 - https://developer.mozilla.org/en-US/docs/Web/Accessibility/ARIA
@@ -12,6 +13,7 @@ Files matching ANY of these patterns trigger this policy:
 - `:\s*#[0-9a-fA-F]{3,8}|rgba?\s*\(|hsla?\s*\(|font-size:\s*[0-9]+px|font-family:\s*["']|tabindex=["'][1-9]`
 
 Skip the following (checked against full path and basename):
+
 - `node_modules/`, `dist/`, `build/`, `.cache/`, `coverage/`, `public/`
 - Token definition files: `tokens/`, `*.tokens.json`, `tailwind.config.*`, `theme.*.ts/js`
 - Minified files: `*.min.css`, `*.min.js`
@@ -81,16 +83,19 @@ Skip the following (checked against full path and basename):
 ## Auto-Fix Guidance
 
 ### Safe to auto-fix
+
 - **Hex colors / RGB / HSL in CSS files**: Replace literal value with a CSS custom property (`var(--color-...)`) if a matching token exists in the project's token file. If no token exists, flag for human review — do not invent token names.
 - **Font-size px → rem**: Convert `font-size: Npx` to `font-size: calc(N / 16 * 1rem)` as a migration comment, then flag for the developer to map to the appropriate token.
 - **tabindex > 0 → 0 or -1**: Replace `tabindex="N"` (N > 0) with `tabindex="0"` when the element needs to be in the natural tab order. Flag if the intent is unclear.
 - **img missing alt**: Add `alt=""` as a placeholder and add a `TODO(a11y): add descriptive alt text` comment. Never invent alt text — flag for human review.
 
 ### Requires human review
+
 - **Font-family literals**: Token mapping depends on the project's design system. Flag with the token name suggestion if the project has a `tokens/` directory.
 - **Event handlers on non-interactive elements**: Refactoring to `<button>` / `<a>` may break layout or styling. Flag the element and the required fix; do not auto-rewrite.
 - **aria-hidden on focusable elements**: Fixing this requires understanding the intent. Flag only.
 
 ### Never auto-fix
+
 - **Brand colors**: Do not silently remap a hex value to a token — the color may be intentional and unmatched in the design system. Always flag for human review.
 - **Accessibility roles**: Do not add or remove ARIA roles automatically.

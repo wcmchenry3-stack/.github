@@ -250,17 +250,17 @@ Use when test coverage is its own deliverable (not bundled with a feature).
 Apply labels when creating issues. Use `gh label list` to see what's available.
 Common patterns across the org:
 
-| Condition | Labels |
-|---|---|
-| Epic | `epic` |
-| Bug | `bug` |
-| Feature | `enhancement` |
-| Test coverage | `testing` |
-| Docs | `documentation` |
-| Applies to all repos | `repo:all` |
-| Repo-specific | `repo:gaming_app` etc. |
-| Priority | `priority:high` / `priority:medium` / `priority:low` |
-| Blocked | `blocked` |
+| Condition            | Labels                                               |
+| -------------------- | ---------------------------------------------------- |
+| Epic                 | `epic`                                               |
+| Bug                  | `bug`                                                |
+| Feature              | `enhancement`                                        |
+| Test coverage        | `testing`                                            |
+| Docs                 | `documentation`                                      |
+| Applies to all repos | `repo:all`                                           |
+| Repo-specific        | `repo:gaming_app` etc.                               |
+| Priority             | `priority:high` / `priority:medium` / `priority:low` |
+| Blocked              | `blocked`                                            |
 
 Create missing labels with `gh label create` before filing issues.
 
