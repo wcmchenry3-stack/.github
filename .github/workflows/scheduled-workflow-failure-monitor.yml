@@ -35,7 +35,7 @@ jobs:
               --repo "$ORG/$repo" \
               --status failure \
               --created ">$SINCE" \
-              --limit 20 \
+              --limit 50 \
               --json name,conclusion,url,createdAt,headBranch \
               --jq '.[] | "- **\(.name)** on `\(.headBranch)` — [\(.createdAt)](\(.url))"' \
               2>/dev/null || true)
@@ -73,6 +73,22 @@ jobs:
           gh label create "$LABEL" --repo "$ORG/.github" \
             --description "Automated workflow failure alert" \
             --color "D93F0B" 2>/dev/null || true
+
+          # Close any stale open workflow-failure issues from previous days
+          STALE=$(gh issue list \
+            --repo "$ORG/.github" \
+            --label "$LABEL" \
+            --state open \
+            --json number \
+            --jq '.[].number' \
+            2>/dev/null || true)
+          for num in $STALE; do
+            gh issue close "$num" \
+              --repo "$ORG/.github" \
+              --comment "Superseded by the $TODAY failure report." \
+              2>/dev/null || true
+            echo "Closed stale issue #$num."
+          done
 
           gh issue create \
             --repo "$ORG/.github" \
