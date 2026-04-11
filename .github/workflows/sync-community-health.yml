@@ -58,6 +58,12 @@ jobs:
           FILE_MAP = {
               'community-health/SECURITY.md':
                   'SECURITY.md',
+              'community-health/CODE_OF_CONDUCT.md':
+                  'CODE_OF_CONDUCT.md',
+              'community-health/CONTRIBUTING.md':
+                  'CONTRIBUTING.md',
+              'community-health/SUPPORT.md':
+                  'SUPPORT.md',
               'community-health/PULL_REQUEST_TEMPLATE.md':
                   '.github/PULL_REQUEST_TEMPLATE.md',
               'community-health/ISSUE_TEMPLATE/bug_report.md':
@@ -238,6 +244,9 @@ jobs:
               '## Files synced\n'
               '**Community health**\n'
               '- `SECURITY.md`\n'
+              '- `CODE_OF_CONDUCT.md`\n'
+              '- `CONTRIBUTING.md`\n'
+              '- `SUPPORT.md`\n'
               '- `.github/PULL_REQUEST_TEMPLATE.md`\n'
               '- `.github/ISSUE_TEMPLATE/bug_report.md`\n'
               '- `.github/ISSUE_TEMPLATE/feature_request.md`\n\n'
