@@ -1,0 +1,10 @@
+name: Design Tokens & Accessibility Check
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+    branches: [main, dev]
+
+jobs:
+  design-token-check:
+    uses: wcmchenry3-stack/.github/.github/workflows/called-design-token-check.yml@main
