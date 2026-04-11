@@ -65,8 +65,16 @@ jobs:
                   '.github/ISSUE_TEMPLATE/feature_request.md',
               '.claude/hooks/lint-on-edit.sh':
                   '.claude/hooks/lint-on-edit.sh',
+              '.claude/hooks/lint-gate.sh':
+                  '.claude/hooks/lint-gate.sh',
+              '.claude/hooks/policy-gate.sh':
+                  '.claude/hooks/policy-gate.sh',
               '.claude/agents/plan-issues.md':
                   '.claude/agents/plan-issues.md',
+              '.claude/agents/lint-review.md':
+                  '.claude/agents/lint-review.md',
+              '.claude/agents/policy-compliance.md':
+                  '.claude/agents/policy-compliance.md',
               'community-health/workflows/commitlint.yml':
                   '.github/workflows/commitlint.yml',
               'community-health/workflows/release-please.yml':
@@ -115,16 +123,18 @@ jobs:
                   else:
                       print(f'  {dest}: up-to-date')
 
-          # -- Merge PostToolUse block into .claude/settings.json ---------------
-          # We never overwrite the whole file — only inject/update the
-          # PostToolUse key so repo-specific hooks are preserved.
+          # -- Merge PreToolUse and PostToolUse blocks into .claude/settings.json --
+          # We never overwrite the whole file — only inject/update the hook keys
+          # so repo-specific hooks are preserved.
           import json as _json
 
-          canonical_raw = open('.claude/settings.json').read()
-          canonical     = _json.loads(canonical_raw)
-          canonical_post = canonical.get('hooks', {}).get('PostToolUse', [])
+          canonical_raw   = open('.claude/settings.json').read()
+          canonical       = _json.loads(canonical_raw)
+          canonical_hooks = canonical.get('hooks', {})
+          canonical_pre   = canonical_hooks.get('PreToolUse', [])
+          canonical_post  = canonical_hooks.get('PostToolUse', [])
 
-          if canonical_post:
+          if canonical_pre or canonical_post:
               dest_settings = '.claude/settings.json'
               existing_raw  = api(
                   f'/repos/{REPO}/contents/{dest_settings}?ref={default_branch}'
@@ -139,15 +149,24 @@ jobs:
                   existing = {'hooks': {}}
 
               existing.setdefault('hooks', {})
+              current_pre  = existing['hooks'].get('PreToolUse', [])
               current_post = existing['hooks'].get('PostToolUse', [])
 
-              if current_post != canonical_post or FORCE:
+              changed = False
+              if canonical_pre and (current_pre != canonical_pre or FORCE):
+                  existing['hooks']['PreToolUse'] = canonical_pre
+                  print(f'  {dest_settings}: PreToolUse differs → will merge')
+                  changed = True
+              if canonical_post and (current_post != canonical_post or FORCE):
                   existing['hooks']['PostToolUse'] = canonical_post
-                  merged_content = _json.dumps(existing, indent=2) + '\n'
                   print(f'  {dest_settings}: PostToolUse differs → will merge')
+                  changed = True
+
+              if changed:
+                  merged_content = _json.dumps(existing, indent=2) + '\n'
                   needs_update.append(('__settings_merge__', dest_settings, merged_content))
               else:
-                  print(f'  {dest_settings}: PostToolUse already up-to-date')
+                  print(f'  {dest_settings}: hooks already up-to-date')
 
           if not needs_update:
               print('  Nothing to sync.')
@@ -202,11 +221,15 @@ jobs:
               '- `.github/PULL_REQUEST_TEMPLATE.md`\n'
               '- `.github/ISSUE_TEMPLATE/bug_report.md`\n'
               '- `.github/ISSUE_TEMPLATE/feature_request.md`\n'
-              '- `.claude/hooks/lint-on-edit.sh` _(new: immediate lint feedback on file edits)_\n'
-              '- `.claude/agents/plan-issues.md` _(new: structured GitHub issue planning agent)_\n'
-              '- `.claude/settings.json` _(merged: PostToolUse hook wired up)_\n'
-              '- `.github/workflows/commitlint.yml` _(new: enforces Conventional Commits on PR titles)_\n'
-              '- `.github/workflows/release-please.yml` _(new: automated release PRs, CHANGELOG, and git tags)_\n\n'
+              '- `.claude/hooks/lint-on-edit.sh` _(immediate lint feedback on file edits)_\n'
+              '- `.claude/hooks/lint-gate.sh` _(blocks `gh pr create` if lint fails)_\n'
+              '- `.claude/hooks/policy-gate.sh` _(blocks `gh pr create` if API policy files detected)_\n'
+              '- `.claude/agents/plan-issues.md` _(structured GitHub issue planning agent)_\n'
+              '- `.claude/agents/lint-review.md` _(auto-fixes lint issues when lint-gate blocks)_\n'
+              '- `.claude/agents/policy-compliance.md` _(reviews and fixes policy violations when policy-gate blocks)_\n'
+              '- `.claude/settings.json` _(merged: PreToolUse and PostToolUse hooks wired up)_\n'
+              '- `.github/workflows/commitlint.yml` _(enforces Conventional Commits on PR titles)_\n'
+              '- `.github/workflows/release-please.yml` _(automated release PRs, CHANGELOG, and git tags)_\n\n'
               '_Auto-generated by `sync-community-health.yml`. '
               'Review and merge to apply the update._'
           )
