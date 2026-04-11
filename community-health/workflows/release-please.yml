@@ -1,0 +1,9 @@
+name: Release Please
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  release-please:
+    uses: wcmchenry3-stack/.github/.github/workflows/called-release-please.yml@main

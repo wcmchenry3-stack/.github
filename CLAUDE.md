@@ -91,6 +91,58 @@ Two mechanisms keep org workflows calibrated against upstream policy changes:
 - Requires secret: `GITHUB_TOKEN` (fine-grained PAT, `issues: write` on this repo)
   — already set via `wrangler secret put GITHUB_TOKEN`.
 
+## Versioning
+
+All org repos use [Semantic Versioning](https://semver.org/) with automated
+releases powered by [release-please](https://github.com/googleapis/release-please).
+
+### Pre-live convention
+
+Apps start at `0.1.0` and stay in `0.x.y` until officially launched.
+`1.0.0` is the official launch milestone — cut via a `feat!:` PR or by
+manually editing `.release-please-manifest.json`.
+
+### Conventional Commits (enforced on PR titles)
+
+Repos use squash-merge, so the PR title becomes the commit on `main`.
+The `commitlint.yml` workflow gates every PR against this format:
+
+```
+<type>[!]: <subject>
+```
+
+| PR title prefix | Version bump (pre-1.0.0) |
+|---|---|
+| `feat:` | minor — `0.1.0 → 0.2.0` |
+| `fix:` / `perf:` | patch — `0.2.0 → 0.2.1` |
+| `feat!:` or `BREAKING CHANGE:` footer | major — `0.2.1 → 1.0.0` |
+| `docs:` / `chore:` / `ci:` / `test:` / `style:` / `refactor:` / `build:` | no bump, hidden from CHANGELOG |
+
+### Release process
+
+1. Merge any `feat:` or `fix:` PR to `main`.
+2. release-please automatically opens a Release PR (`chore: release X.Y.Z`)
+   with an updated `CHANGELOG.md` and bumped version file.
+3. Review the CHANGELOG in the PR, then merge it.
+4. Git tag `vX.Y.Z` and a GitHub Release are created automatically.
+
+### Seeding a new repo
+
+Run the `seed-versioning.yml` workflow via `workflow_dispatch`:
+- `target-repo`: the repo name (e.g. `gaming_app`)
+- `release-type`: `node` (default, for `package.json` repos) or `python`
+- `initial-version`: starting version (default: `0.1.0`)
+
+This creates `release-please-config.json` and `.release-please-manifest.json`
+in the target repo via a PR. Merge the PR, then release-please is active.
+
+### Config files (per app repo)
+
+| File | Purpose |
+|---|---|
+| `release-please-config.json` | release-please behaviour (release type, CHANGELOG sections) |
+| `.release-please-manifest.json` | current version tracker — do not edit manually except to cut 1.0.0 |
+
 ## Conventions
 
 - Workflows are prefixed `called-` and use `workflow_call` triggers.
