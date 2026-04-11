@@ -104,6 +104,8 @@ jobs:
                   '.github/workflows/gemini-policy.yml',
               'community-health/workflows/design-token-check.yml':
                   '.github/workflows/design-token-check.yml',
+              'community-health/workflows/schema-migration.yml':
+                  '.github/workflows/schema-migration.yml',
           }
 
           def api(path, method='GET', body=None):
