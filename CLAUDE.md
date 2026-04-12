@@ -45,7 +45,7 @@ A `PreToolUse` hook gates every `gh pr create` call behind a policy check.
 2. Add the detection pattern to `.claude/policies/policy-patterns.json`.
 3. No hook or agent changes needed.
 
-**Current policies:** OpenAI, Wikipedia/Wikimedia, Google Gemini, Design Tokens & Accessibility.
+**Current policies:** OpenAI, Wikipedia/Wikimedia, Google Gemini, Design Tokens & Accessibility, Feedback Widget Tokens.
 
 ## Design Tokens & Accessibility policy (`called-design-token-check.yml`)
 
@@ -67,6 +67,21 @@ A `PreToolUse` hook gates every `gh pr create` call behind a policy check.
 Flip a repo to `required` under `overrides:` once its frontend is using a design system.
 
 **Policy definition:** `.claude/policies/design-tokens.md` — update alongside the workflow.
+
+## Feedback widget token lint (`called-feedback-token-lint.yml`)
+
+`called-feedback-token-lint.yml` validates that an app's `frontend/feedback-theme.css`
+defines every required `--feedback-*` CSS custom property from the org contract.
+
+- Source of truth: `schemas/feedback-widget-tokens.schema.json` (fetched from meta-repo at runtime)
+- Skips gracefully if `frontend/feedback-theme.css` does not exist (widget not yet integrated)
+- Accepts `feedback-theme-path` input to override the default path
+- Accepts `schema-ref` input to pin the schema version (default: `main`)
+- Enforcement mode controlled via `policy-enforcement.yml` key `feedback-token-lint`
+
+**App integration:** Call this workflow from an app repo's CI whenever
+`frontend/feedback-theme.css` changes. Flip enforcement to `required` in
+`policy-enforcement.yml` once the widget is live in production.
 
 ## Org-level policy enforcement (`policy-enforcement.yml`)
 

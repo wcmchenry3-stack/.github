@@ -1,0 +1,210 @@
+name: Feedback Token Lint
+
+# Validates that an app's feedback-theme.css defines every required
+# --feedback-* CSS custom property from the org token contract.
+#
+# Source of truth: schemas/feedback-widget-tokens.schema.json in this meta-repo.
+# All tokens with "required": true must appear as declarations (--token-name:)
+# in the app's feedback-theme.css.
+#
+# Policy reference: .claude/policies/feedback-widget-tokens.md
+#
+# Enforcement mode is read from .github/policy-enforcement.yml in the meta-repo:
+#   advisory (default) — missing tokens are annotated as warnings, check passes
+#   required           — missing tokens fail the check
+
+on:
+  workflow_call:
+    inputs:
+      feedback-theme-path:
+        required: false
+        type: string
+        default: 'frontend/feedback-theme.css'
+        description: >
+          Path to the app's feedback theme CSS file, relative to the repo root.
+          Override if the app uses a non-standard layout.
+      schema-ref:
+        required: false
+        type: string
+        default: 'main'
+        description: >
+          Git ref of wcmchenry3-stack/.github to fetch the token schema from.
+          Default is main. Pin to a SHA for reproducible builds.
+
+jobs:
+  feedback-token-lint:
+    name: Feedback Token Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # -----------------------------------------------------------------------
+      # Skip early if the theme file doesn't exist in this repo.
+      # The called workflow is wired into org-wide CI; repos that haven't
+      # integrated the widget yet will simply pass with a notice.
+      # -----------------------------------------------------------------------
+      - name: Check theme file exists
+        id: theme-check
+        run: |
+          THEME_PATH="${{ inputs.feedback-theme-path }}"
+          if [ ! -f "$THEME_PATH" ]; then
+            echo "::notice::$THEME_PATH not found — feedback widget not yet integrated. Skipping token lint."
+            echo "theme_exists=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "theme_exists=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # -----------------------------------------------------------------------
+      # Fetch the machine-readable token schema from the meta-repo.
+      # This ensures the check always runs against the org-level contract,
+      # not a possibly-stale local copy.
+      # -----------------------------------------------------------------------
+      - name: Fetch token schema
+        if: steps.theme-check.outputs.theme_exists == 'true'
+        run: |
+          SCHEMA_URL="https://raw.githubusercontent.com/wcmchenry3-stack/.github/${{ inputs.schema-ref }}/schemas/feedback-widget-tokens.schema.json"
+          echo "Fetching schema from $SCHEMA_URL"
+          if ! curl -sfL "$SCHEMA_URL" -o /tmp/feedback-token-schema.json; then
+            echo "::error::Could not fetch feedback token schema from $SCHEMA_URL"
+            exit 1
+          fi
+          echo "Schema fetched successfully."
+          # Sanity-check: confirm jq can parse it
+          jq -e '.properties' /tmp/feedback-token-schema.json > /dev/null
+
+      # -----------------------------------------------------------------------
+      # Extract required token names from the schema.
+      # The schema is nested: .properties.{category}.properties.{token-name}
+      # We flatten all categories and collect tokens where "required" == true.
+      # -----------------------------------------------------------------------
+      - name: Extract required tokens
+        if: steps.theme-check.outputs.theme_exists == 'true'
+        id: required-tokens
+        run: |
+          REQUIRED=$(jq -r '[
+            .properties
+            | to_entries[]
+            | .value.properties
+            | to_entries[]
+            | select(.value.required == true)
+            | .key
+          ] | .[]' /tmp/feedback-token-schema.json)
+
+          COUNT=$(echo "$REQUIRED" | wc -l | tr -d ' ')
+          echo "Found $COUNT required tokens:"
+          echo "$REQUIRED"
+          echo "required_tokens<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$REQUIRED" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+          echo "token_count=$COUNT" >> "$GITHUB_OUTPUT"
+
+      # -----------------------------------------------------------------------
+      # Load enforcement mode from the org-level policy-enforcement.yml.
+      # Defaults to advisory if the file cannot be fetched.
+      # -----------------------------------------------------------------------
+      - name: Load enforcement mode
+        if: steps.theme-check.outputs.theme_exists == 'true'
+        id: enforce
+        run: |
+          CONFIG_URL="https://raw.githubusercontent.com/wcmchenry3-stack/.github/main/.github/policy-enforcement.yml"
+          if ! curl -sfL "$CONFIG_URL" -o /tmp/policy-enforcement.yml; then
+            echo "::warning::Could not fetch policy-enforcement.yml — defaulting to advisory"
+            echo "mode=advisory" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          REPO_NAME="${GITHUB_REPOSITORY##*/}"
+          MODE=$(yq ".overrides.\"${REPO_NAME}\"[\"feedback-token-lint\"] // .defaults[\"feedback-token-lint\"] // \"advisory\"" /tmp/policy-enforcement.yml)
+          if [ -z "$MODE" ] || [ "$MODE" = "null" ]; then MODE="advisory"; fi
+          echo "mode=${MODE}" >> "$GITHUB_OUTPUT"
+          echo "::notice::feedback-token-lint enforcement mode for ${REPO_NAME}: ${MODE}"
+
+      # -----------------------------------------------------------------------
+      # Core check: for each required token, verify a declaration exists in
+      # the theme file.
+      #
+      # A declaration is: --feedback-token-name: (followed by any value).
+      # We match `^\s*--token-name\s*:` to catch indented declarations and
+      # whitespace before the colon, while excluding var() references.
+      # -----------------------------------------------------------------------
+      - name: Check required tokens are defined
+        if: steps.theme-check.outputs.theme_exists == 'true'
+        run: |
+          THEME_PATH="${{ inputs.feedback-theme-path }}"
+          FAIL=0
+          MISSING=()
+          PRESENT=()
+
+          while IFS= read -r token; do
+            [ -z "$token" ] && continue
+            # Match as a CSS property declaration (anchored to start of value, colon required)
+            if grep -qE "^\s*${token}\s*:" "$THEME_PATH"; then
+              PRESENT+=("$token")
+            else
+              MISSING+=("$token")
+              FAIL=1
+            fi
+          done <<< "${{ steps.required-tokens.outputs.required_tokens }}"
+
+          echo ""
+          echo "============================================================"
+          echo "  Feedback Token Lint — Results"
+          echo "  Theme file : $THEME_PATH"
+          echo "  Enforcement: ${{ steps.enforce.outputs.mode }}"
+          echo "============================================================"
+          echo ""
+
+          if [ ${#PRESENT[@]} -gt 0 ]; then
+            echo "  Defined (${#PRESENT[@]}):"
+            for t in "${PRESENT[@]}"; do
+              echo "    ✓ $t"
+            done
+            echo ""
+          fi
+
+          if [ ${#MISSING[@]} -gt 0 ]; then
+            echo "  Missing (${#MISSING[@]}):"
+            for t in "${MISSING[@]}"; do
+              echo "    ✗ $t"
+              echo "::error file=$THEME_PATH::Required token '$t' is not defined. Add '$t: var(--your-app-token);' to $THEME_PATH. See https://raw.githubusercontent.com/wcmchenry3-stack/.github/main/.claude/policies/feedback-widget-tokens.md for the full contract."
+            done
+            echo ""
+          fi
+
+          echo "============================================================"
+
+          if [ "$FAIL" -eq 0 ]; then
+            echo "  All ${{ steps.required-tokens.outputs.token_count }} required tokens are defined."
+          elif [ "${{ steps.enforce.outputs.mode }}" != "required" ]; then
+            echo "::warning::$THEME_PATH is missing ${#MISSING[@]} required --feedback-* token(s). Enforcement mode is '${{ steps.enforce.outputs.mode }}' — not failing check. Flip to 'required' in .github/policy-enforcement.yml when the widget is live."
+            exit 0
+          fi
+
+          exit "$FAIL"
+
+      # -----------------------------------------------------------------------
+      # Summary — always runs so metadata is visible even on skip
+      # -----------------------------------------------------------------------
+      - name: Summary
+        if: always()
+        run: |
+          echo "============================================================"
+          echo "  Feedback Token Lint — Policy Summary"
+          echo "============================================================"
+          echo "  Schema ref   : ${{ inputs.schema-ref }}"
+          echo "  Theme path   : ${{ inputs.feedback-theme-path }}"
+          echo "  Repo         : ${{ github.repository }}"
+          if [ "${{ steps.theme-check.outputs.theme_exists }}" = "true" ]; then
+            echo "  Token count  : ${{ steps.required-tokens.outputs.token_count }} required tokens checked"
+            echo "  Enforcement  : ${{ steps.enforce.outputs.mode }}"
+          else
+            echo "  Status       : skipped (theme file not present)"
+          fi
+          echo ""
+          echo "  Policy reference:"
+          echo "    https://raw.githubusercontent.com/wcmchenry3-stack/.github/main/.claude/policies/feedback-widget-tokens.md"
+          echo ""
+          echo "  To enforce failures on a specific repo:"
+          echo "    Set overrides.<repo-name>.feedback-token-lint: required"
+          echo "    in .github/policy-enforcement.yml"
+          echo "============================================================"
