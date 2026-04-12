@@ -47,6 +47,8 @@ for POLICY in $(jq -r 'to_entries[] | select(.value | type == "object") | .key' 
   while IFS= read -r file; do
     # Skip .claude/ directory (contains policy definitions with pattern strings)
     case "$file" in .claude/*) continue ;; esac
+    # Skip documentation files — they reference APIs by name but contain no executable code
+    case "$file" in *.md|*.mdx|CLAUDE.md) continue ;; esac
 
     # Skip files matching the skip pattern (checked against full path and basename
     # so patterns can exclude by directory prefix OR by filename)
