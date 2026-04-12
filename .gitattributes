@@ -1,0 +1,7 @@
+# Enforce LF line endings for shell scripts and JSON on all platforms.
+# Prevents Windows core.autocrlf=true from introducing \r into files that
+# bash processes with $(jq ...) — CRLF in jq output causes key-lookup failures.
+*.sh    text eol=lf
+*.json  text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
