@@ -44,6 +44,10 @@ for POLICY in $(jq -r 'to_entries[] | select(.value | type == "object") | .key' 
   DETECT=$(jq -r --arg p "$POLICY" '.[$p].detect' "$PATTERNS_FILE" | tr -d '\r')
   SKIP=$(jq -r --arg p "$POLICY" '.[$p].skip // empty' "$PATTERNS_FILE" | tr -d '\r')
 
+  # Guard: skip policy if detect pattern resolved to null or empty
+  # (prevents any file with the literal string "null" from being flagged)
+  [ -z "$DETECT" ] || [ "$DETECT" = "null" ] && continue
+
   while IFS= read -r file; do
     # Skip .claude/ directory (contains policy definitions with pattern strings)
     case "$file" in .claude/*) continue ;; esac
