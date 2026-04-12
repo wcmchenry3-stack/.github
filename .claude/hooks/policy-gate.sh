@@ -40,9 +40,9 @@ fi
 # ── Check each policy's detection patterns ───────────────────────
 TRIGGERED=""
 
-for POLICY in $(jq -r 'to_entries[] | select(.value | type == "object") | .key' "$PATTERNS_FILE"); do
-  DETECT=$(jq -r --arg p "$POLICY" '.[$p].detect' "$PATTERNS_FILE")
-  SKIP=$(jq -r --arg p "$POLICY" '.[$p].skip // empty' "$PATTERNS_FILE")
+for POLICY in $(jq -r 'to_entries[] | select(.value | type == "object") | .key' "$PATTERNS_FILE" | tr -d '\r'); do
+  DETECT=$(jq -r --arg p "$POLICY" '.[$p].detect' "$PATTERNS_FILE" | tr -d '\r')
+  SKIP=$(jq -r --arg p "$POLICY" '.[$p].skip // empty' "$PATTERNS_FILE" | tr -d '\r')
 
   while IFS= read -r file; do
     # Skip .claude/ directory (contains policy definitions with pattern strings)
