@@ -1,0 +1,217 @@
+name: Provenance Coverage
+
+# Validates that every i18n key found across an app's locale files has a
+# corresponding entry in provenance.json marking it as either `ai` or `human`.
+#
+# - Missing keys (in locales but not in provenance.json) → ::error in `required`
+#   mode, ::warning in `advisory` mode.
+# - Orphaned keys (in provenance.json but not in any locale file) → ::warning
+#   regardless of mode (cleanup hint, never blocks).
+#
+# Skips gracefully when provenance.json does not yet exist, so the workflow
+# can be wired into CI before any app has seeded its provenance map.
+#
+# Enforcement mode is read from .github/policy-enforcement.yml in the meta-repo
+# under key `provenance-coverage` (default `advisory`).
+
+on:
+  workflow_call:
+    inputs:
+      locales-path:
+        required: false
+        type: string
+        default: 'frontend/src/i18n/locales'
+        description: >
+          Directory containing per-language locale subdirectories (e.g. en/,
+          es/, etc.). The workflow walks every .json file under this path
+          (excluding provenance.json itself and any _meta directories).
+      provenance-path:
+        required: false
+        type: string
+        default: 'frontend/src/i18n/locales/provenance.json'
+        description: >
+          Path to provenance.json relative to repo root. Each entry maps an
+          i18n key to either "ai" or "human".
+
+jobs:
+  provenance-coverage:
+    name: Provenance Coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # -----------------------------------------------------------------------
+      # Skip early if provenance.json doesn't exist yet. The workflow is
+      # designed to be wired into org-wide CI before each app seeds its
+      # provenance map; repos that haven't started will pass with a notice.
+      # -----------------------------------------------------------------------
+      - name: Check provenance file exists
+        id: prov-check
+        run: |
+          PROV_PATH="${{ inputs.provenance-path }}"
+          LOCALES_PATH="${{ inputs.locales-path }}"
+          if [ ! -f "$PROV_PATH" ]; then
+            echo "::notice::$PROV_PATH not found — provenance map not yet seeded. Skipping coverage check."
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ ! -d "$LOCALES_PATH" ]; then
+            echo "::notice::$LOCALES_PATH not found — no locale files to check."
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
+
+      # -----------------------------------------------------------------------
+      # Load enforcement mode from the org-level policy-enforcement.yml.
+      # Defaults to advisory if the file or key cannot be read.
+      # -----------------------------------------------------------------------
+      - name: Load enforcement mode
+        if: steps.prov-check.outputs.should_run == 'true'
+        id: enforce
+        run: |
+          CONFIG_URL="https://raw.githubusercontent.com/wcmchenry3-stack/.github/main/.github/policy-enforcement.yml"
+          if ! curl -sfL "$CONFIG_URL" -o /tmp/policy-enforcement.yml; then
+            echo "::warning::Could not fetch policy-enforcement.yml — defaulting to advisory"
+            echo "mode=advisory" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          REPO_NAME="${GITHUB_REPOSITORY##*/}"
+          MODE=$(yq ".overrides.\"${REPO_NAME}\"[\"provenance-coverage\"] // .defaults[\"provenance-coverage\"] // \"advisory\"" /tmp/policy-enforcement.yml)
+          if [ -z "$MODE" ] || [ "$MODE" = "null" ]; then MODE="advisory"; fi
+          echo "mode=${MODE}" >> "$GITHUB_OUTPUT"
+          echo "::notice::provenance-coverage enforcement mode for ${REPO_NAME}: ${MODE}"
+
+      # -----------------------------------------------------------------------
+      # Collect the union of all i18n keys across every locale file under
+      # locales-path. Files are flat key→value JSON. Skip provenance.json
+      # itself and anything under _meta/.
+      # -----------------------------------------------------------------------
+      - name: Collect locale keys
+        if: steps.prov-check.outputs.should_run == 'true'
+        id: collect
+        run: |
+          LOCALES_PATH="${{ inputs.locales-path }}"
+          PROV_PATH="${{ inputs.provenance-path }}"
+
+          # Find all locale json files, excluding provenance.json and _meta/
+          mapfile -t LOCALE_FILES < <(find "$LOCALES_PATH" -type f -name '*.json' \
+            -not -path "*/\_meta/*" \
+            -not -path "$PROV_PATH" \
+            | sort)
+
+          echo "Found ${#LOCALE_FILES[@]} locale files under $LOCALES_PATH"
+
+          # Union of keys across all files
+          : > /tmp/locale-keys.txt
+          for f in "${LOCALE_FILES[@]}"; do
+            jq -r 'keys[]' "$f" >> /tmp/locale-keys.txt
+          done
+          sort -u /tmp/locale-keys.txt -o /tmp/locale-keys.txt
+
+          KEY_COUNT=$(wc -l < /tmp/locale-keys.txt | tr -d ' ')
+          echo "Collected $KEY_COUNT unique keys across all locales"
+          echo "key_count=${KEY_COUNT}" >> "$GITHUB_OUTPUT"
+          echo "file_count=${#LOCALE_FILES[@]}" >> "$GITHUB_OUTPUT"
+
+          # Provenance keys
+          jq -r 'keys[]' "$PROV_PATH" | sort -u > /tmp/prov-keys.txt
+          PROV_COUNT=$(wc -l < /tmp/prov-keys.txt | tr -d ' ')
+          echo "provenance.json has $PROV_COUNT entries"
+          echo "prov_count=${PROV_COUNT}" >> "$GITHUB_OUTPUT"
+
+      # -----------------------------------------------------------------------
+      # Compare. Missing = in locales but not in provenance. Orphaned = in
+      # provenance but not in any locale file.
+      # -----------------------------------------------------------------------
+      - name: Compare keys
+        if: steps.prov-check.outputs.should_run == 'true'
+        run: |
+          PROV_PATH="${{ inputs.provenance-path }}"
+          MODE="${{ steps.enforce.outputs.mode }}"
+
+          comm -23 /tmp/locale-keys.txt /tmp/prov-keys.txt > /tmp/missing.txt
+          comm -13 /tmp/locale-keys.txt /tmp/prov-keys.txt > /tmp/orphaned.txt
+
+          MISSING_COUNT=$(wc -l < /tmp/missing.txt | tr -d ' ')
+          ORPHANED_COUNT=$(wc -l < /tmp/orphaned.txt | tr -d ' ')
+
+          echo ""
+          echo "============================================================"
+          echo "  Provenance Coverage — Results"
+          echo "  Locales path : ${{ inputs.locales-path }}"
+          echo "  Provenance   : $PROV_PATH"
+          echo "  Enforcement  : $MODE"
+          echo "  Locale keys  : ${{ steps.collect.outputs.key_count }}"
+          echo "  Provenance   : ${{ steps.collect.outputs.prov_count }} entries"
+          echo "  Missing      : $MISSING_COUNT"
+          echo "  Orphaned     : $ORPHANED_COUNT"
+          echo "============================================================"
+          echo ""
+
+          if [ "$MISSING_COUNT" -gt 0 ]; then
+            echo "  Keys missing from provenance.json (showing up to 50):"
+            head -50 /tmp/missing.txt | while IFS= read -r key; do
+              echo "    ✗ $key"
+              if [ "$MODE" = "required" ]; then
+                echo "::error file=$PROV_PATH::Locale key '$key' has no provenance entry. Add '\"$key\": \"ai\"' or '\"$key\": \"human\"'."
+              else
+                echo "::warning file=$PROV_PATH::Locale key '$key' has no provenance entry. Add '\"$key\": \"ai\"' or '\"$key\": \"human\"'."
+              fi
+            done
+            if [ "$MISSING_COUNT" -gt 50 ]; then
+              echo "    … and $((MISSING_COUNT - 50)) more (full list in tmp/missing.txt artifact)"
+            fi
+            echo ""
+          fi
+
+          if [ "$ORPHANED_COUNT" -gt 0 ]; then
+            echo "  Orphaned entries in provenance.json (no matching locale key, showing up to 20):"
+            head -20 /tmp/orphaned.txt | while IFS= read -r key; do
+              echo "    ⚠ $key"
+              echo "::warning file=$PROV_PATH::provenance.json entry '$key' has no matching locale key. Remove or update."
+            done
+            if [ "$ORPHANED_COUNT" -gt 20 ]; then
+              echo "    … and $((ORPHANED_COUNT - 20)) more"
+            fi
+            echo ""
+          fi
+
+          if [ "$MISSING_COUNT" -eq 0 ] && [ "$ORPHANED_COUNT" -eq 0 ]; then
+            echo "  All locale keys have provenance entries and no orphans."
+            exit 0
+          fi
+
+          if [ "$MISSING_COUNT" -gt 0 ] && [ "$MODE" = "required" ]; then
+            echo "::error::$MISSING_COUNT locale key(s) are missing from provenance.json. Enforcement is 'required' — failing check."
+            exit 1
+          fi
+
+          if [ "$MISSING_COUNT" -gt 0 ]; then
+            echo "::warning::$MISSING_COUNT locale key(s) are missing from provenance.json. Enforcement is '$MODE' — not failing check. Flip to 'required' in .github/policy-enforcement.yml when ready."
+          fi
+
+          exit 0
+
+      # -----------------------------------------------------------------------
+      # Summary — always runs so metadata is visible even on skip
+      # -----------------------------------------------------------------------
+      - name: Summary
+        if: always()
+        run: |
+          echo "============================================================"
+          echo "  Provenance Coverage — Policy Summary"
+          echo "============================================================"
+          echo "  Locales path  : ${{ inputs.locales-path }}"
+          echo "  Provenance    : ${{ inputs.provenance-path }}"
+          echo "  Repo          : ${{ github.repository }}"
+          if [ "${{ steps.prov-check.outputs.should_run }}" = "true" ]; then
+            echo "  Enforcement   : ${{ steps.enforce.outputs.mode }}"
+            echo "  Locale files  : ${{ steps.collect.outputs.file_count }}"
+            echo "  Locale keys   : ${{ steps.collect.outputs.key_count }}"
+            echo "  Provenance    : ${{ steps.collect.outputs.prov_count }} entries"
+          else
+            echo "  Status        : skipped (provenance.json not found)"
+          fi
+          echo "============================================================"
