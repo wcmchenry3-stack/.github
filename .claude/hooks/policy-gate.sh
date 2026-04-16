@@ -8,8 +8,8 @@ set -uo pipefail
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)
 
-# Only gate on PR-creation commands
-if ! echo "$COMMAND" | grep -qE 'gh\s+pr\s+create'; then
+# Only gate on PR-creation commands (anchored to start to avoid matching --body text)
+if ! echo "$COMMAND" | grep -qE '^gh\s+pr\s+create'; then
   exit 0
 fi
 

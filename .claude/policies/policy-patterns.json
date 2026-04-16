@@ -1,19 +1,19 @@
 {
   "openai": {
     "detect": "from openai|import openai|openai\\.com|OpenAI\\(|client\\.chat\\.completions|client\\.completions\\.create|OPENAI_API_KEY",
-    "skip": "^\\.env"
+    "skip": "^\\.env|\\.test\\.[jt]sx?$|\\.spec\\.[jt]sx?$"
   },
   "wikipedia": {
     "detect": "wikipedia\\.org|mediawiki|wikimedia",
-    "skip": null
+    "skip": "\\.test\\.[jt]sx?$|\\.spec\\.[jt]sx?$"
   },
   "gemini": {
     "detect": "google\\.generativeai|from google.*generativeai|genai\\.|GenerativeModel|GEMINI_API_KEY|GOOGLE_AI_API_KEY",
-    "skip": "^\\.env"
+    "skip": "^\\.env|\\.test\\.[jt]sx?$|\\.spec\\.[jt]sx?$"
   },
   "claude": {
     "detect": "from anthropic|import anthropic|@anthropic-ai/sdk|Anthropic\\(|ANTHROPIC_API_KEY|claude_agent_sdk",
-    "skip": "^\\.env"
+    "skip": "^\\.env|\\.test\\.[jt]sx?$|\\.spec\\.[jt]sx?$"
   },
   "design-tokens": {
     "detect": ":\\s*#[0-9a-fA-F]{3,8}|rgba?\\s*\\(|hsla?\\s*\\(|font-size:\\s*[0-9]+px|font-family:\\s*[\"']|tabindex=[\"'][1-9]",
