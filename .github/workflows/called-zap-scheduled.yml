@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       target-url:
-        description: 'URL to scan'
+        description: 'URL to scan (use for public URLs; use target-url-secret for secret URLs)'
         type: string
         required: false
         default: ''
@@ -19,6 +19,10 @@ on:
         type: string
         required: false
         default: ''
+    secrets:
+      target-url-secret:
+        description: 'URL to scan when the URL must be kept secret (takes precedence over target-url input)'
+        required: false
 
 jobs:
   zap-scan:
@@ -42,15 +46,23 @@ jobs:
             echo "run=false" >> "$GITHUB_OUTPUT"
             echo "⏭ Skipping ZAP scan: branch '$CURRENT' not in [$BRANCHES]"
           fi
+      - name: Resolve scan URL
+        id: scan-url
+        run: |
+          URL="${{ secrets.target-url-secret }}"
+          if [ -z "$URL" ]; then
+            URL="${{ inputs.target-url }}"
+          fi
+          echo "value=$URL" >> "$GITHUB_OUTPUT"
       - name: Run ZAP baseline scan
-        if: ${{ steps.guard.outputs.run == 'true' && inputs.target-url != '' }}
+        if: ${{ steps.guard.outputs.run == 'true' && steps.scan-url.outputs.value != '' }}
         uses: zaproxy/action-baseline@v0.15.0
         with:
-          target: ${{ inputs.target-url }}
+          target: ${{ steps.scan-url.outputs.value }}
           fail_action: false
       - name: Upload ZAP report
         uses: actions/upload-artifact@v7
-        if: ${{ steps.guard.outputs.run == 'true' && inputs.target-url != '' }}
+        if: ${{ steps.guard.outputs.run == 'true' && steps.scan-url.outputs.value != '' }}
         with:
           name: ${{ inputs.artifact-name }}-${{ github.run_id }}
           path: report_html.html
