@@ -39,7 +39,7 @@ jobs:
           - buffingchi_site
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Sync files to ${{ matrix.repo }}
         env:
