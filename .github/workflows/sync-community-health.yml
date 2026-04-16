@@ -15,6 +15,7 @@ on:
     paths:
       - 'community-health/**'
       - '.claude/policies/**'
+      - '.claude/agents/**'
   workflow_dispatch:
     inputs:
       force:
