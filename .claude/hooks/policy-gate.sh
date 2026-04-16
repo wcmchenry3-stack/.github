@@ -28,8 +28,10 @@ MERGE_BASE=$(git merge-base origin/dev HEAD 2>/dev/null || \
              git merge-base origin/main HEAD 2>/dev/null || \
              echo "")
 if [ -n "$MERGE_BASE" ]; then
-  CHANGED_FILES=$(git diff --name-only "$MERGE_BASE" HEAD 2>/dev/null || echo "")
+  DIFF_BASE="$MERGE_BASE"
+  CHANGED_FILES=$(git diff --name-only "$DIFF_BASE" HEAD 2>/dev/null || echo "")
 else
+  DIFF_BASE="HEAD~1"
   CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
 fi
 
@@ -60,8 +62,10 @@ for POLICY in $(jq -r 'to_entries[] | select(.value | type == "object") | .key' 
       continue
     fi
 
-    # Check if file exists and matches detection pattern
-    if [ -f "$file" ] && grep -qE "$DETECT" "$file" 2>/dev/null; then
+    # Check if the diff *introduces* lines matching the detection pattern.
+    # Grep only added lines (^\+[^+]) so pre-existing literals in unchanged
+    # code never trigger the gate — only newly written or modified lines do.
+    if git diff "$DIFF_BASE" HEAD -- "$file" 2>/dev/null | grep -qE "^\+[^+].*($DETECT)"; then
       TRIGGERED+="  - $POLICY → $file\n"
       break  # One match per policy is enough to trigger
     fi
