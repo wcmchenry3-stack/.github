@@ -24,7 +24,7 @@ defaults:
 # Per-repo overrides. Uncomment and set to `required` when the repo
 # begins calling the API. Repo key is the bare repo name (no owner).
 overrides: {}
-  # book_app:
+  # BookshelfAI:
   #   openai: required
-  # office_holder_cursor:
+  # RulersAI:
   #   gemini: required
