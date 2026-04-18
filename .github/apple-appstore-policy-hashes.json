@@ -1,0 +1,14 @@
+{
+  "last_checked": "2026-03-28",
+  "note": "SHA-256 of stripped text content. 'uninitialized' triggers first-run issue and populates real hashes.",
+  "pages": {
+    "review-guidelines": {
+      "url": "https://developer.apple.com/app-store/review/guidelines/",
+      "sha256": "uninitialized"
+    },
+    "upcoming-requirements": {
+      "url": "https://developer.apple.com/news/upcoming-requirements/",
+      "sha256": "uninitialized"
+    }
+  }
+}

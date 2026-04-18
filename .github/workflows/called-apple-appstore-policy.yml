@@ -1,0 +1,362 @@
+name: Apple App Store Policy Check
+
+# Validates that PR code touching iOS / React Native files complies with:
+#   - Apple App Store Review Guidelines
+#   - Apple privacy manifest requirements
+#   - Apple in-app purchase requirements (StoreKit)
+#
+# Policy references (calibrated against policy-version input):
+#   https://developer.apple.com/app-store/review/guidelines/
+#   https://developer.apple.com/news/upcoming-requirements/
+#
+# All checks use continue-on-error: true — failures are warnings, not merge blockers.
+# This will be tightened once the gaming_app repo is in a stable compliance state.
+#
+# Applied to repos with an iOS / React Native project structure.
+# Checks are skipped automatically when no changed files reference iOS/RN.
+
+on:
+  workflow_call:
+    inputs:
+      policy-version:
+        required: false
+        type: string
+        default: '2026-03-28'
+        description: >
+          ISO date of the Apple App Store policy snapshot this workflow was
+          calibrated against. Surfaced in run logs so drift is visible.
+          Bump after reviewing policy pages post-update.
+      allowed-repos:
+        required: false
+        type: string
+        description: >
+          Comma-separated list of repos permitted to call this workflow.
+          Omit to allow any repo. Example: wcmchenry3-stack/gaming_app
+          To add a new repo: append ,wcmchenry3-stack/new-repo to the
+          allowed-repos value in the caller — no changes needed here.
+
+jobs:
+  apple-appstore-policy-check:
+    name: Apple App Store Policy Check
+    runs-on: ubuntu-latest
+
+    steps:
+      # ---------------------------------------------------------------
+      # Optional repo guard — only active when allowed-repos is provided.
+      # Prevents accidental calls from repos that don't ship to App Store.
+      # ---------------------------------------------------------------
+      - name: Repo guard
+        if: inputs.allowed-repos != ''
+        run: |
+          CURRENT="${{ github.repository }}"
+          ALLOWED="${{ inputs.allowed-repos }}"
+          if ! echo ",$ALLOWED," | grep -q ",$CURRENT,"; then
+            echo "::error::Apple App Store policy workflow is restricted to: $ALLOWED. Current repo: $CURRENT. To add this repo, update the allowed-repos input in the caller workflow."
+            exit 1
+          fi
+          echo "Repo guard passed: $CURRENT is in the permitted list."
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Identify changed iOS / React Native files
+        id: find-ios
+        run: |
+          BASE_REF="${{ github.base_ref }}"
+          if [ -n "$BASE_REF" ]; then
+            git diff --name-only "origin/${BASE_REF}...HEAD" > changed_files.txt
+          else
+            git diff --name-only HEAD~1 HEAD > changed_files.txt 2>/dev/null || touch changed_files.txt
+          fi
+
+          echo "All changed files:"
+          cat changed_files.txt
+
+          # Structural detection: does this repo have an iOS project?
+          HAS_STRUCTURE=false
+          if [ -d "ios" ]; then
+            HAS_STRUCTURE=true
+            echo "Detected iOS project structure (ios/ directory)."
+          fi
+          if [ -f "package.json" ] && grep -q '"react-native"' package.json 2>/dev/null; then
+            HAS_STRUCTURE=true
+            echo "Detected React Native project (package.json contains react-native)."
+          fi
+
+          if [ "$HAS_STRUCTURE" = "false" ]; then
+            echo "No iOS/React Native project structure detected — all App Store checks skipped."
+            echo "has_ios_files=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Filter changed files to iOS-relevant ones
+          > ios_files.txt
+          > js_files.txt
+          while IFS= read -r file; do
+            if [ -f "$file" ]; then
+              case "$file" in
+                ios/*|*.swift|*Info.plist|*PrivacyInfo.xcprivacy|Podfile|Podfile.lock)
+                  echo "$file" >> ios_files.txt ;;
+                *.js|*.ts|*.tsx|*.jsx|package.json|yarn.lock|package-lock.json)
+                  echo "$file" >> js_files.txt ;;
+              esac
+            fi
+          done < changed_files.txt
+
+          if [ ! -s ios_files.txt ] && [ ! -s js_files.txt ]; then
+            echo "No iOS/RN-relevant files changed — App Store checks skipped."
+            echo "has_ios_files=false" >> "$GITHUB_OUTPUT"
+          else
+            echo ""
+            echo "iOS/RN files changed:"
+            cat ios_files.txt js_files.txt 2>/dev/null
+            echo "has_ios_files=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ---------------------------------------------------------------
+      # Check 1: Privacy manifest (PrivacyInfo.xcprivacy) present
+      # Apple mandated privacy manifests for all apps starting spring 2024.
+      # Apps submitted without one are rejected by App Store Connect.
+      # The file must live inside the iOS app target directory.
+      # https://developer.apple.com/documentation/bundleresources/privacy-manifest-files
+      # ---------------------------------------------------------------
+      - name: 'Check 1: Privacy manifest (PrivacyInfo.xcprivacy) present'
+        if: steps.find-ios.outputs.has_ios_files == 'true'
+        continue-on-error: true
+        run: |
+          if [ ! -d "ios" ]; then
+            echo "No ios/ directory found — privacy manifest check skipped."
+            exit 0
+          fi
+
+          # Search the entire repo, not just the diff — this file may predate this PR
+          MANIFEST=$(find . -name "PrivacyInfo.xcprivacy" -not -path "./.git/*" 2>/dev/null | head -1)
+
+          if [ -z "$MANIFEST" ]; then
+            echo "::error::PrivacyInfo.xcprivacy is missing. Apple requires a privacy manifest for all iOS apps (mandatory since spring 2024). Create the file at ios/<YourAppName>/PrivacyInfo.xcprivacy and declare NSPrivacyTracking, NSPrivacyTrackingDomains, NSPrivacyCollectedDataTypes, and NSPrivacyAccessedAPITypes. See: https://developer.apple.com/documentation/bundleresources/privacy-manifest-files"
+            exit 1
+          else
+            echo "Check 1 passed: Privacy manifest found at $MANIFEST"
+          fi
+
+      # ---------------------------------------------------------------
+      # Check 2: NSUsageDescription strings for permission-using APIs
+      # Apple rejects apps that use privacy-sensitive APIs without a
+      # corresponding NSXxxUsageDescription in Info.plist. The description
+      # must be non-empty — Apple reviewers verify these are meaningful.
+      # https://developer.apple.com/documentation/uikit/protecting_the_user_s_privacy
+      # ---------------------------------------------------------------
+      - name: 'Check 2: NSUsageDescription strings for permission APIs'
+        if: steps.find-ios.outputs.has_ios_files == 'true'
+        continue-on-error: true
+        run: |
+          FAIL=0
+
+          # Map of RN module / API patterns → required Info.plist key
+          # Format: "code_pattern|plist_key"
+          declare -A PERMISSION_MAP
+          PERMISSION_MAP["react-native-camera|@react-native-community/camera|RNCCamera|AVCaptureDevice"]="NSCameraUsageDescription"
+          PERMISSION_MAP["@react-native-community/geolocation|Geolocation\.getCurrentPosition|CLLocationManager"]="NSLocationWhenInUseUsageDescription"
+          PERMISSION_MAP["@react-native-community/contacts|RNContacts|CNContactStore"]="NSContactsUsageDescription"
+          PERMISSION_MAP["react-native-microphone|AVAudioSession|AVAudioRecorder|useRecorder"]="NSMicrophoneUsageDescription"
+
+          # Find Info.plist files in the repo
+          INFO_PLIST=$(find . -name "Info.plist" -not -path "./.git/*" -not -path "*/Pods/*" 2>/dev/null | head -1)
+
+          if [ -z "$INFO_PLIST" ]; then
+            echo "No Info.plist found — NSUsageDescription check skipped."
+            exit 0
+          fi
+
+          # Check each permission mapping
+          for CODE_PATTERN in "${!PERMISSION_MAP[@]}"; do
+            PLIST_KEY="${PERMISSION_MAP[$CODE_PATTERN]}"
+
+            # Check if any changed JS/TS files use the API
+            API_USED=false
+            while IFS= read -r file; do
+              if grep -qiE "$CODE_PATTERN" "$file" 2>/dev/null; then
+                API_USED=true
+                break
+              fi
+            done < js_files.txt
+
+            if [ "$API_USED" = "true" ]; then
+              # Verify the usage description key exists in Info.plist
+              if ! grep -q "$PLIST_KEY" "$INFO_PLIST"; then
+                echo "::error file=$INFO_PLIST::$PLIST_KEY is missing from Info.plist but the corresponding API is used in changed files. Apple will reject the app without this key. Add a meaningful description of why your app needs this permission. See: https://developer.apple.com/documentation/uikit/protecting_the_user_s_privacy"
+                FAIL=1
+              else
+                # Check for empty description value
+                if grep -A1 "$PLIST_KEY" "$INFO_PLIST" | grep -qE '<string>\s*</string>|<string/>'; then
+                  echo "::error file=$INFO_PLIST::$PLIST_KEY exists but has an empty description string. Apple requires a meaningful user-facing explanation of why this permission is needed. See: https://developer.apple.com/documentation/uikit/protecting_the_user_s_privacy"
+                  FAIL=1
+                else
+                  echo "$PLIST_KEY found and non-empty in $INFO_PLIST — OK."
+                fi
+              fi
+            fi
+          done
+
+          if [ "$FAIL" -eq 0 ]; then
+            echo "Check 2 passed: All detected permission APIs have corresponding NSUsageDescription strings."
+          fi
+          exit "$FAIL"
+
+      # ---------------------------------------------------------------
+      # Check 3: StoreKit / approved IAP SDK used for in-app purchases
+      # Apple requires all in-app purchases on iOS to use StoreKit
+      # (or an approved RN wrapper). Directing users to alternative
+      # payment methods without the External Purchase entitlement is a
+      # policy violation that results in app rejection.
+      # https://developer.apple.com/storekit/
+      # ---------------------------------------------------------------
+      - name: 'Check 3: StoreKit / approved IAP SDK used for in-app purchases'
+        if: steps.find-ios.outputs.has_ios_files == 'true'
+        continue-on-error: true
+        run: |
+          FAIL=0
+          APPROVED_IAP='react-native-iap|@react-native-community/in-app-purchases|react-native-purchases|StoreKit|SKPaymentQueue|SKProduct|Transaction\.currentEntitlement'
+          PROHIBITED_IAP='paddle|fastspring|chargebee.*purchase|lemon.?squeezy'
+          IAP_CONTEXT='subscription|in.?app.?purchase|consumable|non.?consumable|purchase.*product|restore.*purchase'
+
+          ALL_FILES=$(cat ios_files.txt js_files.txt 2>/dev/null || true)
+
+          # Check for approved IAP SDK
+          APPROVED_FOUND=false
+          while IFS= read -r file; do
+            if grep -qiE "$APPROVED_IAP" "$file" 2>/dev/null; then
+              APPROVED_FOUND=true
+              echo "$file: Approved IAP SDK/API reference found."
+              break
+            fi
+          done <<< "$ALL_FILES"
+
+          # Check for prohibited payment SDKs with IAP context
+          while IFS= read -r file; do
+            if grep -qiE "$PROHIBITED_IAP" "$file" 2>/dev/null; then
+              if grep -qiE "$IAP_CONTEXT" "$file" 2>/dev/null; then
+                echo "::error file=$file::Prohibited payment SDK detected in an in-app purchase context. Apple requires StoreKit (or react-native-iap/react-native-purchases) for all in-app purchases on iOS. Alternative payment processors for IAP will result in App Store rejection. See: https://developer.apple.com/storekit/"
+                FAIL=1
+              fi
+            fi
+          done <<< "$ALL_FILES"
+
+          # Warn if IAP context found but no approved SDK
+          if [ "$APPROVED_FOUND" = "false" ] && [ "$FAIL" -eq 0 ]; then
+            # Only warn if there's actual IAP-related code in the diff
+            IAP_CODE_PRESENT=false
+            while IFS= read -r file; do
+              if grep -qiE "$IAP_CONTEXT" "$file" 2>/dev/null; then
+                IAP_CODE_PRESENT=true
+                break
+              fi
+            done <<< "$ALL_FILES"
+
+            if [ "$IAP_CODE_PRESENT" = "true" ]; then
+              echo "::warning::In-app purchase context detected in changed files but no approved IAP SDK found (react-native-iap, react-native-purchases, or StoreKit). Ensure iOS in-app purchases are implemented with StoreKit. See: https://developer.apple.com/storekit/"
+            else
+              echo "Check 3: No IAP code in changed files — check skipped."
+            fi
+          fi
+
+          if [ "$FAIL" -eq 0 ] && [ "$APPROVED_FOUND" = "true" ]; then
+            echo "Check 3 passed: Approved IAP SDK found."
+          fi
+          exit "$FAIL"
+
+      # ---------------------------------------------------------------
+      # Check 4: No external purchase flow direction
+      # Apple's guidelines prohibit directing users to external payment
+      # flows for digital goods/subscriptions without the External
+      # Purchase entitlement (requires Apple approval). This includes
+      # UI copy like "buy on our website" or deep links to web checkout.
+      # https://developer.apple.com/app-store/review/guidelines/#3.1.1
+      # ---------------------------------------------------------------
+      - name: 'Check 4: No external purchase flow direction'
+        if: steps.find-ios.outputs.has_ios_files == 'true'
+        continue-on-error: true
+        run: |
+          FAIL=0
+          # Patterns that suggest directing users to external purchase
+          EXTERNAL_PURCHASE_PATTERN='buy on.{0,20}(website|web|site)|purchase.{0,20}(our|the).{0,20}(site|web)|cheaper.{0,20}web|visit.{0,20}(store|shop).{0,20}(buy|purchase)|external.{0,20}checkout'
+          LINKING_PAYMENT_PATTERN='Linking\.openURL.{0,80}(pay|checkout|purchase|buy|subscribe)'
+
+          ALL_JS_FILES=$(cat js_files.txt 2>/dev/null || true)
+
+          while IFS= read -r file; do
+            if grep -qiE "$EXTERNAL_PURCHASE_PATTERN" "$file" 2>/dev/null; then
+              MATCHES=$(grep -niE "$EXTERNAL_PURCHASE_PATTERN" "$file" | head -3)
+              echo "::error file=$file::Language detected that may direct users to external purchase flows. Apple rejects apps that direct users away from the App Store for digital goods or subscriptions without an approved External Purchase entitlement. Review these matches: $MATCHES See: https://developer.apple.com/app-store/review/guidelines/#3.1.1"
+              FAIL=1
+            fi
+            if grep -qiE "$LINKING_PAYMENT_PATTERN" "$file" 2>/dev/null; then
+              MATCHES=$(grep -niE "$LINKING_PAYMENT_PATTERN" "$file" | head -3)
+              echo "::error file=$file::Linking.openURL call with payment/checkout context detected. Opening external payment pages for digital content is a policy violation without Apple's External Purchase entitlement. Review these matches: $MATCHES See: https://developer.apple.com/app-store/review/guidelines/#3.1.1"
+              FAIL=1
+            fi
+          done <<< "$ALL_JS_FILES"
+
+          if [ "$FAIL" -eq 0 ]; then
+            echo "Check 4 passed: No external purchase flow direction detected."
+          fi
+          exit "$FAIL"
+
+      # ---------------------------------------------------------------
+      # Check 5: No private/undocumented API usage (Swift)
+      # Apple automatically scans submitted binaries for private API
+      # usage and rejects apps that call undocumented APIs. Common
+      # patterns: dlopen/dlsym, NSClassFromString with private classes,
+      # objc methods with underscore-prefixed internal names.
+      # https://developer.apple.com/app-store/review/guidelines/#2.5.1
+      # ---------------------------------------------------------------
+      - name: 'Check 5: No private/undocumented API usage'
+        if: steps.find-ios.outputs.has_ios_files == 'true'
+        continue-on-error: true
+        run: |
+          PRIVATE_API_PATTERN='dlopen\s*\(|dlsym\s*\(|NSClassFromString\s*\(\s*"[^"]*_[A-Z]|@objc\s.*func\s+_[a-zA-Z]'
+
+          SWIFT_FILES=$(cat ios_files.txt 2>/dev/null | grep '\.swift$' || true)
+
+          if [ -z "$SWIFT_FILES" ]; then
+            echo "No .swift files in diff — private API check skipped."
+            exit 0
+          fi
+
+          while IFS= read -r file; do
+            if grep -qE "$PRIVATE_API_PATTERN" "$file" 2>/dev/null; then
+              MATCHES=$(grep -nE "$PRIVATE_API_PATTERN" "$file" | head -3)
+              echo "::warning file=$file::Possible private API usage detected. Apple scans submitted binaries and rejects apps using undocumented APIs (dlopen, dlsym, private NSClassFromString). This may be a false positive if the method is an intentional internal name. Review: $MATCHES See: https://developer.apple.com/app-store/review/guidelines/#2.5.1"
+            fi
+          done <<< "$SWIFT_FILES"
+          echo "Check 5 complete: private API warnings are informational — review before App Store submission."
+
+      # ---------------------------------------------------------------
+      # Summary — always runs so policy metadata is visible in every log
+      # ---------------------------------------------------------------
+      - name: Policy summary
+        if: always()
+        run: |
+          echo "================================================"
+          echo "  Apple App Store Policy Compliance Summary"
+          echo "================================================"
+          echo "  Policy snapshot date : ${{ inputs.policy-version }}"
+          echo "  Repo                 : ${{ github.repository }}"
+          echo ""
+          echo "  Policy references:"
+          echo "    App Store Review Guidelines  : https://developer.apple.com/app-store/review/guidelines/"
+          echo "    Upcoming Requirements        : https://developer.apple.com/news/upcoming-requirements/"
+          echo "    Privacy Manifest Files       : https://developer.apple.com/documentation/bundleresources/privacy-manifest-files"
+          echo "    StoreKit (IAP)               : https://developer.apple.com/storekit/"
+          echo "    Permission Usage Descriptions: https://developer.apple.com/documentation/uikit/protecting_the_user_s_privacy"
+          echo ""
+          echo "  All checks run with continue-on-error: true (warnings, not merge blockers)."
+          echo "  To harden: remove continue-on-error after gaming_app reaches stable compliance."
+          echo ""
+          echo "  To update after an Apple policy change:"
+          echo "    1. Review the policy pages above for new requirements"
+          echo "    2. Update grep patterns in called-apple-appstore-policy.yml if needed"
+          echo "    3. Bump policy-version default to today's date"
+          echo "    4. Open a PR to wcmchenry3-stack/.github"
+          echo "================================================"

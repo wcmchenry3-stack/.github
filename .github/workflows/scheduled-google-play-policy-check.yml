@@ -1,0 +1,175 @@
+name: Scheduled Google Play Policy Check
+
+# Runs monthly to detect changes to the Google Play policy pages that
+# called-google-play-policy.yml is calibrated against. Uses SHA-256 hashes
+# of stripped page text (not raw HTML) to avoid false positives from
+# nav/footer/layout changes.
+#
+# Note: Google Play policy pages are single-page apps (SPA) — curl may only
+# retrieve a lightweight HTML shell rather than full policy text. A minimum-
+# content guard emits a warning if the stripped text is suspiciously short
+# (< 500 chars). Hashes are still recorded so changes to the shell itself
+# are detected. Verify manually after an alert if content seems incomplete.
+#
+# On change detected: opens a GitHub issue with links and commits
+#   updated hashes to .github/google-play-policy-hashes.json
+# On no change: logs a clean summary and exits
+#
+# Manual trigger: workflow_dispatch (use after known Google Play announcements)
+
+on:
+  schedule:
+    - cron: '0 9 15 * *'   # 9 AM UTC on the 15th of every month
+  workflow_dispatch:
+
+permissions:
+  contents: write   # to commit updated hash baseline
+  issues: write     # to open alert issues
+
+jobs:
+  check-policy-hashes:
+    name: Check Google Play Policy Page Hashes
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch and hash Google Play policy pages
+        run: |
+          fetch_and_hash() {
+            local url="$1"
+            local outfile="$2"
+
+            # Fetch the page (follow redirects, fail on HTTP errors)
+            # -L follows redirects (play.google.com/about/... → play.google/...)
+            curl -sfL -L --max-time 30 "$url" > /tmp/raw_page.html
+
+            # Strip HTML to plain text — removes script/style blocks first,
+            # then strips all remaining tags and collapses whitespace.
+            sed -E '/<(script|style|noscript|nav|footer|header)[^>]*>/,/<\/(script|style|noscript|nav|footer|header)>/d' /tmp/raw_page.html \
+              | sed 's/<[^>]*>//g' \
+              | grep -v '^\s*$' \
+              | tr -s ' \t' ' ' \
+              | sed 's/^ //;s/ $//' \
+              > "$outfile"
+
+            # Guard: Google Play pages are SPAs — warn if content is very short
+            CHARS=$(wc -c < "$outfile")
+            if [ "$CHARS" -lt 500 ]; then
+              echo "::warning::Page content for $url is very short ($CHARS chars after stripping). The page may be JS-rendered and curl may not have captured full policy text. The hash will be recorded but verify the page content manually after any alert."
+            else
+              echo "Page content for $url: $CHARS chars after stripping — looks complete."
+            fi
+          }
+
+          fetch_and_hash "https://play.google.com/about/developer-content-policy/"          /tmp/content_policy.txt
+          fetch_and_hash "https://play.google.com/about/developer-distribution-agreement.html" /tmp/dda.txt
+
+          echo "content_policy_hash=$(sha256sum /tmp/content_policy.txt | cut -d' ' -f1)" >> "$GITHUB_ENV"
+          echo "dda_hash=$(sha256sum /tmp/dda.txt | cut -d' ' -f1)"                       >> "$GITHUB_ENV"
+
+          echo "Current hashes:"
+          echo "  developer-content-policy          : $(sha256sum /tmp/content_policy.txt | cut -d' ' -f1)"
+          echo "  developer-distribution-agreement  : $(sha256sum /tmp/dda.txt | cut -d' ' -f1)"
+
+      - name: Compare hashes and detect changes
+        id: compare
+        run: |
+          BASELINE=".github/google-play-policy-hashes.json"
+
+          STORED_CONTENT=$(jq -r '.pages["developer-content-policy"].sha256' "$BASELINE")
+          STORED_DDA=$(jq -r '.pages["developer-distribution-agreement"].sha256' "$BASELINE")
+
+          CURRENT_CONTENT="${content_policy_hash}"
+          CURRENT_DDA="${dda_hash}"
+
+          echo "Stored hashes  — content-policy: $STORED_CONTENT | dda: $STORED_DDA"
+          echo "Current hashes — content-policy: $CURRENT_CONTENT | dda: $CURRENT_DDA"
+
+          CHANGES=""
+          if [ "$CURRENT_CONTENT" != "$STORED_CONTENT" ]; then
+            CHANGES="$CHANGES\n- **Developer Program Policies** — hash changed (was \`${STORED_CONTENT:0:12}...\`, now \`${CURRENT_CONTENT:0:12}...\`) — [review page](https://play.google.com/about/developer-content-policy/)"
+          fi
+          if [ "$CURRENT_DDA" != "$STORED_DDA" ]; then
+            CHANGES="$CHANGES\n- **Developer Distribution Agreement** — hash changed (was \`${STORED_DDA:0:12}...\`, now \`${CURRENT_DDA:0:12}...\`) — [review page](https://play.google.com/about/developer-distribution-agreement.html)"
+          fi
+
+          if [ -n "$CHANGES" ]; then
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            printf "%b" "$CHANGES" > /tmp/changes.txt
+            echo "Changes detected — will open issue."
+          else
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            echo "No Google Play policy changes detected."
+          fi
+
+      - name: Update baseline file
+        if: steps.compare.outputs.has_changes == 'true'
+        run: |
+          TODAY=$(date -u +%Y-%m-%d)
+          jq \
+            --arg date    "$TODAY" \
+            --arg content "${content_policy_hash}" \
+            --arg dda     "${dda_hash}" \
+            '.last_checked = $date |
+             .pages["developer-content-policy"].sha256 = $content |
+             .pages["developer-distribution-agreement"].sha256 = $dda |
+             del(.note)' \
+            .github/google-play-policy-hashes.json > /tmp/hashes-updated.json
+          mv /tmp/hashes-updated.json .github/google-play-policy-hashes.json
+          echo "Baseline updated."
+
+      - name: Commit updated baseline
+        if: steps.compare.outputs.has_changes == 'true'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .github/google-play-policy-hashes.json
+          git commit -m "chore: update Google Play policy hash baseline [skip ci]"
+          git push
+
+      - name: Open GitHub issue for policy change
+        if: steps.compare.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          CHANGES=$(cat /tmp/changes.txt)
+
+          if echo "$CHANGES" | grep -q "uninitialized"; then
+            TITLE="chore: Google Play policy hash baseline initialized"
+          else
+            TITLE="action required: Google Play policy pages updated — review called-google-play-policy.yml"
+          fi
+
+          {
+            printf '## Google Play Policy Change Detected\n\n'
+            printf 'The following policy pages have new content hashes since the last check:\n\n'
+            printf '%s\n\n' "$CHANGES"
+            printf '> **Note:** Google Play policy pages are SPAs. If the hash changed but the content looks\n'
+            printf '> minimal, verify the page manually — curl may have only retrieved the JS app shell.\n\n'
+            printf '## Required Actions\n\n'
+            printf '1. Review the linked pages above for any new requirements\n'
+            printf '2. Update grep patterns in `.github/workflows/called-google-play-policy.yml` if needed\n'
+            printf '3. Bump the `policy-version` default to today'"'"'s date in that workflow\n'
+            printf '4. Open a PR to this repo and close this issue once merged\n\n'
+            printf '## Policy References\n'
+            printf '- [Developer Program Policies](https://play.google.com/about/developer-content-policy/)\n'
+            printf '- [Developer Distribution Agreement](https://play.google.com/about/developer-distribution-agreement.html)\n'
+            printf '- [Play Billing Library](https://developer.android.com/google/play/billing)\n'
+            printf '- [Target API Requirements](https://support.google.com/googleplay/android-developer/answer/11926878)\n\n'
+            printf '---\n*Auto-opened by [scheduled-google-play-policy-check](../../actions/workflows/scheduled-google-play-policy-check.yml)*\n'
+          } > /tmp/issue_body.md
+
+          gh issue create \
+            --title "$TITLE" \
+            --body-file /tmp/issue_body.md
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "=============================================="
+          echo "  Google Play Policy Check Complete"
+          echo "=============================================="
+          echo "  Run date      : $(date -u +%Y-%m-%d)"
+          echo "  Changes found : ${{ steps.compare.outputs.has_changes }}"
+          echo "=============================================="

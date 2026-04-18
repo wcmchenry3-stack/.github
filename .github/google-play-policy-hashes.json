@@ -1,0 +1,14 @@
+{
+  "last_checked": "2026-03-28",
+  "note": "SHA-256 of stripped text content. 'uninitialized' triggers first-run issue and populates real hashes. Note: Google Play policy pages may be JS-rendered; see scheduled-google-play-policy-check.yml comments.",
+  "pages": {
+    "developer-content-policy": {
+      "url": "https://play.google.com/about/developer-content-policy/",
+      "sha256": "uninitialized"
+    },
+    "developer-distribution-agreement": {
+      "url": "https://play.google.com/about/developer-distribution-agreement.html",
+      "sha256": "uninitialized"
+    }
+  }
+}

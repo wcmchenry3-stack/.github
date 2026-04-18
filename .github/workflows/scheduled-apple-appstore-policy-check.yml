@@ -1,0 +1,176 @@
+name: Scheduled Apple App Store Policy Check
+
+# Runs monthly to detect changes to the Apple App Store policy pages that
+# called-apple-appstore-policy.yml is calibrated against. Uses SHA-256 hashes
+# of stripped page text (not raw HTML) to avoid false positives from
+# nav/footer/layout changes.
+#
+# Monitors two pages:
+#   1. App Store Review Guidelines — the main policy document
+#   2. Upcoming Requirements — CRITICAL: Apple announces enforcement deadlines
+#      here (e.g., the Privacy Manifest mandate in 2024). Changes here often
+#      require action before the stated deadline.
+#
+# Apple's pages are static HTML — curl retrieves full content reliably.
+#
+# On change detected: opens a GitHub issue with links and commits
+#   updated hashes to .github/apple-appstore-policy-hashes.json
+# On no change: logs a clean summary and exits
+#
+# Manual trigger: workflow_dispatch (use after known Apple announcements)
+
+on:
+  schedule:
+    - cron: '0 9 15 * *'   # 9 AM UTC on the 15th of every month
+  workflow_dispatch:
+
+permissions:
+  contents: write   # to commit updated hash baseline
+  issues: write     # to open alert issues
+
+jobs:
+  check-policy-hashes:
+    name: Check Apple App Store Policy Page Hashes
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch and hash Apple App Store policy pages
+        run: |
+          fetch_and_hash() {
+            local url="$1"
+            local outfile="$2"
+
+            # Fetch the page (follow redirects, fail on HTTP errors)
+            curl -sfL --max-time 30 "$url" > /tmp/raw_page.html
+
+            # Strip HTML to plain text — removes script/style blocks first,
+            # then strips all remaining tags and collapses whitespace.
+            sed -E '/<(script|style|noscript|nav|footer|header)[^>]*>/,/<\/(script|style|noscript|nav|footer|header)>/d' /tmp/raw_page.html \
+              | sed 's/<[^>]*>//g' \
+              | grep -v '^\s*$' \
+              | tr -s ' \t' ' ' \
+              | sed 's/^ //;s/ $//' \
+              > "$outfile"
+
+            # Defensive guard: warn if content is very short (shouldn't happen for Apple)
+            CHARS=$(wc -c < "$outfile")
+            if [ "$CHARS" -lt 500 ]; then
+              echo "::warning::Page content for $url is very short ($CHARS chars after stripping). Verify the page is accessible."
+            else
+              echo "Page content for $url: $CHARS chars after stripping — looks complete."
+            fi
+          }
+
+          fetch_and_hash "https://developer.apple.com/app-store/review/guidelines/" /tmp/review_guidelines.txt
+          fetch_and_hash "https://developer.apple.com/news/upcoming-requirements/"  /tmp/upcoming_requirements.txt
+
+          echo "review_guidelines_hash=$(sha256sum /tmp/review_guidelines.txt    | cut -d' ' -f1)" >> "$GITHUB_ENV"
+          echo "upcoming_requirements_hash=$(sha256sum /tmp/upcoming_requirements.txt | cut -d' ' -f1)" >> "$GITHUB_ENV"
+
+          echo "Current hashes:"
+          echo "  review-guidelines     : $(sha256sum /tmp/review_guidelines.txt | cut -d' ' -f1)"
+          echo "  upcoming-requirements : $(sha256sum /tmp/upcoming_requirements.txt | cut -d' ' -f1)"
+
+      - name: Compare hashes and detect changes
+        id: compare
+        run: |
+          BASELINE=".github/apple-appstore-policy-hashes.json"
+
+          STORED_GUIDELINES=$(jq -r '.pages["review-guidelines"].sha256'      "$BASELINE")
+          STORED_UPCOMING=$(jq -r '.pages["upcoming-requirements"].sha256'     "$BASELINE")
+
+          CURRENT_GUIDELINES="${review_guidelines_hash}"
+          CURRENT_UPCOMING="${upcoming_requirements_hash}"
+
+          echo "Stored hashes  — review-guidelines: $STORED_GUIDELINES | upcoming-requirements: $STORED_UPCOMING"
+          echo "Current hashes — review-guidelines: $CURRENT_GUIDELINES | upcoming-requirements: $CURRENT_UPCOMING"
+
+          CHANGES=""
+          if [ "$CURRENT_GUIDELINES" != "$STORED_GUIDELINES" ]; then
+            CHANGES="$CHANGES\n- **App Store Review Guidelines** — hash changed (was \`${STORED_GUIDELINES:0:12}...\`, now \`${CURRENT_GUIDELINES:0:12}...\`) — [review page](https://developer.apple.com/app-store/review/guidelines/)"
+          fi
+          if [ "$CURRENT_UPCOMING" != "$STORED_UPCOMING" ]; then
+            CHANGES="$CHANGES\n- **Upcoming Requirements** — hash changed (was \`${STORED_UPCOMING:0:12}...\`, now \`${CURRENT_UPCOMING:0:12}...\`) — [review page](https://developer.apple.com/news/upcoming-requirements/) ⚠️ **This page announces enforcement deadlines — check for new requirements with upcoming dates.**"
+          fi
+
+          if [ -n "$CHANGES" ]; then
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            printf "%b" "$CHANGES" > /tmp/changes.txt
+            echo "Changes detected — will open issue."
+          else
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            echo "No Apple App Store policy changes detected."
+          fi
+
+      - name: Update baseline file
+        if: steps.compare.outputs.has_changes == 'true'
+        run: |
+          TODAY=$(date -u +%Y-%m-%d)
+          jq \
+            --arg date       "$TODAY" \
+            --arg guidelines "${review_guidelines_hash}" \
+            --arg upcoming   "${upcoming_requirements_hash}" \
+            '.last_checked = $date |
+             .pages["review-guidelines"].sha256 = $guidelines |
+             .pages["upcoming-requirements"].sha256 = $upcoming |
+             del(.note)' \
+            .github/apple-appstore-policy-hashes.json > /tmp/hashes-updated.json
+          mv /tmp/hashes-updated.json .github/apple-appstore-policy-hashes.json
+          echo "Baseline updated."
+
+      - name: Commit updated baseline
+        if: steps.compare.outputs.has_changes == 'true'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .github/apple-appstore-policy-hashes.json
+          git commit -m "chore: update Apple App Store policy hash baseline [skip ci]"
+          git push
+
+      - name: Open GitHub issue for policy change
+        if: steps.compare.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          CHANGES=$(cat /tmp/changes.txt)
+
+          if echo "$CHANGES" | grep -q "uninitialized"; then
+            TITLE="chore: Apple App Store policy hash baseline initialized"
+          else
+            TITLE="action required: Apple App Store policy pages updated — review called-apple-appstore-policy.yml"
+          fi
+
+          {
+            printf '## Apple App Store Policy Change Detected\n\n'
+            printf 'The following policy pages have new content hashes since the last check:\n\n'
+            printf '%s\n\n' "$CHANGES"
+            printf '> ⚠️ If the **Upcoming Requirements** page changed, check for new enforcement deadlines.\n'
+            printf '> Apple often announces mandatory requirements months in advance on that page.\n\n'
+            printf '## Required Actions\n\n'
+            printf '1. Review the linked pages above for any new requirements\n'
+            printf '2. Update grep patterns in `.github/workflows/called-apple-appstore-policy.yml` if needed\n'
+            printf '3. Bump the `policy-version` default to today'"'"'s date in that workflow\n'
+            printf '4. Open a PR to this repo and close this issue once merged\n\n'
+            printf '## Policy References\n'
+            printf '- [App Store Review Guidelines](https://developer.apple.com/app-store/review/guidelines/)\n'
+            printf '- [Upcoming Requirements](https://developer.apple.com/news/upcoming-requirements/)\n'
+            printf '- [Privacy Manifest Files](https://developer.apple.com/documentation/bundleresources/privacy-manifest-files)\n'
+            printf '- [StoreKit (IAP)](https://developer.apple.com/storekit/)\n\n'
+            printf '---\n*Auto-opened by [scheduled-apple-appstore-policy-check](../../actions/workflows/scheduled-apple-appstore-policy-check.yml)*\n'
+          } > /tmp/issue_body.md
+
+          gh issue create \
+            --title "$TITLE" \
+            --body-file /tmp/issue_body.md
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "================================================"
+          echo "  Apple App Store Policy Check Complete"
+          echo "================================================"
+          echo "  Run date      : $(date -u +%Y-%m-%d)"
+          echo "  Changes found : ${{ steps.compare.outputs.has_changes }}"
+          echo "================================================"

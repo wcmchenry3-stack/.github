@@ -1,0 +1,318 @@
+name: Google Play Store Policy Check
+
+# Validates that PR code touching Android / React Native files complies with:
+#   - Google Play Developer Program Policies (content, billing, permissions)
+#   - Google Play Developer Distribution Agreement
+#
+# Policy references (calibrated against policy-version input):
+#   https://play.google.com/about/developer-content-policy/
+#   https://play.google.com/about/developer-distribution-agreement.html
+#   https://developer.android.com/google/play/billing
+#
+# All checks use continue-on-error: true — failures are warnings, not merge blockers.
+# This will be tightened once the gaming_app repo is in a stable compliance state.
+#
+# Applied to repos with a React Native or Android project structure.
+# Checks are skipped automatically when no changed files reference Android/RN.
+
+on:
+  workflow_call:
+    inputs:
+      policy-version:
+        required: false
+        type: string
+        default: '2026-03-28'
+        description: >
+          ISO date of the Google Play policy snapshot this workflow was
+          calibrated against. Surfaced in run logs so drift is visible.
+          Bump after reviewing policy pages post-update.
+      allowed-repos:
+        required: false
+        type: string
+        description: >
+          Comma-separated list of repos permitted to call this workflow.
+          Omit to allow any repo. Example: wcmchenry3-stack/gaming_app
+          To add a new repo: append ,wcmchenry3-stack/new-repo to the
+          allowed-repos value in the caller — no changes needed here.
+
+jobs:
+  google-play-policy-check:
+    name: Google Play Store Policy Check
+    runs-on: ubuntu-latest
+
+    steps:
+      # ---------------------------------------------------------------
+      # Optional repo guard — only active when allowed-repos is provided.
+      # Prevents accidental calls from repos that don't ship to Play Store.
+      # ---------------------------------------------------------------
+      - name: Repo guard
+        if: inputs.allowed-repos != ''
+        run: |
+          CURRENT="${{ github.repository }}"
+          ALLOWED="${{ inputs.allowed-repos }}"
+          if ! echo ",$ALLOWED," | grep -q ",$CURRENT,"; then
+            echo "::error::Google Play policy workflow is restricted to: $ALLOWED. Current repo: $CURRENT. To add this repo, update the allowed-repos input in the caller workflow."
+            exit 1
+          fi
+          echo "Repo guard passed: $CURRENT is in the permitted list."
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Identify changed Android / React Native files
+        id: find-mobile
+        run: |
+          # github.base_ref is set on pull_request events; empty on push events.
+          # Fall back to HEAD~1 on push so the diff still reflects what was just committed.
+          BASE_REF="${{ github.base_ref }}"
+          if [ -n "$BASE_REF" ]; then
+            git diff --name-only "origin/${BASE_REF}...HEAD" > changed_files.txt
+          else
+            git diff --name-only HEAD~1 HEAD > changed_files.txt 2>/dev/null || touch changed_files.txt
+          fi
+
+          echo "All changed files:"
+          cat changed_files.txt
+
+          # Structural detection: does this repo have an Android / React Native project?
+          HAS_STRUCTURE=false
+          if [ -d "android" ] || [ -f "android/app/build.gradle" ]; then
+            HAS_STRUCTURE=true
+            echo "Detected Android project structure."
+          fi
+          if [ -f "package.json" ] && grep -q '"react-native"' package.json 2>/dev/null; then
+            HAS_STRUCTURE=true
+            echo "Detected React Native project (package.json contains react-native)."
+          fi
+
+          if [ "$HAS_STRUCTURE" = "false" ]; then
+            echo "No Android/React Native project structure detected — all Google Play checks skipped."
+            echo "has_mobile_files=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Filter changed files to Android-relevant ones
+          > android_files.txt
+          > pkg_files.txt
+          while IFS= read -r file; do
+            if [ -f "$file" ]; then
+              case "$file" in
+                android/*|*.gradle|*AndroidManifest.xml|*.kt|*.java|*libs.versions.toml)
+                  echo "$file" >> android_files.txt ;;
+                package.json|yarn.lock|package-lock.json)
+                  echo "$file" >> pkg_files.txt ;;
+              esac
+            fi
+          done < changed_files.txt
+
+          if [ ! -s android_files.txt ] && [ ! -s pkg_files.txt ]; then
+            echo "No Android/RN-relevant files changed — Google Play checks skipped."
+            echo "has_mobile_files=false" >> "$GITHUB_OUTPUT"
+          else
+            echo ""
+            echo "Android/RN files changed:"
+            cat android_files.txt pkg_files.txt 2>/dev/null
+            echo "has_mobile_files=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ---------------------------------------------------------------
+      # Check 1: Google Play Billing Library used for in-app purchases
+      # Google Play requires all in-app purchases use the Play Billing
+      # Library (v7.0+). Alternative payment processors for IAP violate
+      # policy and can result in app removal.
+      # https://developer.android.com/google/play/billing
+      # https://support.google.com/googleplay/android-developer/answer/10281818
+      # ---------------------------------------------------------------
+      - name: 'Check 1: Google Play Billing Library used for in-app purchases'
+        if: steps.find-mobile.outputs.has_mobile_files == 'true'
+        continue-on-error: true
+        run: |
+          FAIL=0
+
+          # Check build.gradle / libs.versions.toml for Play Billing dependency
+          GRADLE_FILES=$(cat android_files.txt 2>/dev/null | grep -E '\.gradle$|\.gradle\.kts$|libs\.versions\.toml$' || true)
+
+          if [ -n "$GRADLE_FILES" ]; then
+            while IFS= read -r file; do
+              if grep -qiE 'billingclient:billing' "$file"; then
+                # Check for outdated version (< 7)
+                if grep -qE 'billingclient:billing:[1-6]\.' "$file"; then
+                  echo "::error file=$file::Google Play Billing Library version is outdated. Version 7.0+ is required as of November 2024. Update to com.android.billingclient:billing:7.x.x. See: https://developer.android.com/google/play/billing/release-notes"
+                  FAIL=1
+                else
+                  echo "$file: Google Play Billing Library dependency found."
+                fi
+              fi
+            done <<< "$GRADLE_FILES"
+          fi
+
+          # Check package.json for React Native IAP packages
+          if [ -s pkg_files.txt ]; then
+            while IFS= read -r file; do
+              if grep -qE '"react-native-iap"|"@react-native-community/in-app-purchases"|"react-native-purchases"' "$file"; then
+                echo "$file: React Native IAP package found."
+              fi
+            done < pkg_files.txt
+          fi
+
+          # Warn on alternative payment SDKs (Stripe/PayPal OK for web, not for IAP)
+          ALL_CHANGED_FILES=$(cat android_files.txt pkg_files.txt 2>/dev/null || true)
+          if [ -n "$ALL_CHANGED_FILES" ]; then
+            while IFS= read -r file; do
+              if grep -qiE '"stripe"|"react-native-stripe"|"paypal"|"braintree"|"square-payments"' "$file" 2>/dev/null; then
+                echo "::warning file=$file::Alternative payment SDK detected (Stripe/PayPal/Braintree/Square). These are permitted for web-based subscription flows but must NOT be used for in-app purchases. In-app purchases require Google Play Billing. Review usage carefully. See: https://support.google.com/googleplay/android-developer/answer/10281818"
+              fi
+            done <<< "$ALL_CHANGED_FILES"
+          fi
+
+          if [ "$FAIL" -eq 0 ]; then
+            echo "Check 1 passed: No billing policy violations detected."
+          fi
+          exit "$FAIL"
+
+      # ---------------------------------------------------------------
+      # Check 2: Target SDK version 34+ (Android 14)
+      # Google Play requires apps targeting Android 14 (API 34) or higher
+      # for new apps and updates. Failing to meet this requirement will
+      # prevent submissions.
+      # https://support.google.com/googleplay/android-developer/answer/11926878
+      # ---------------------------------------------------------------
+      - name: 'Check 2: Target SDK version 34+'
+        if: steps.find-mobile.outputs.has_mobile_files == 'true'
+        continue-on-error: true
+        run: |
+          FAIL=0
+          GRADLE_FILES=$(cat android_files.txt 2>/dev/null | grep -E '\.gradle$|\.gradle\.kts$' || true)
+
+          if [ -z "$GRADLE_FILES" ]; then
+            echo "No .gradle files in diff — targetSdkVersion check skipped."
+            exit 0
+          fi
+
+          while IFS= read -r file; do
+            # Match both Groovy DSL (targetSdkVersion 33) and Kotlin DSL (targetSdk = 33)
+            if grep -qE 'targetSdk(Version)?\s*[=:]?\s*[0-9]+' "$file"; then
+              VERSION=$(grep -oE 'targetSdk(Version)?\s*[=:]?\s*[0-9]+' "$file" | grep -oE '[0-9]+$' | head -1)
+              if [ -n "$VERSION" ] && [ "$VERSION" -lt 34 ]; then
+                echo "::error file=$file::targetSdkVersion is $VERSION but must be 34+ (Android 14) for Google Play submissions. Update targetSdk to 34 or higher. See: https://support.google.com/googleplay/android-developer/answer/11926878"
+                FAIL=1
+              else
+                echo "$file: targetSdkVersion $VERSION — OK."
+              fi
+            fi
+          done <<< "$GRADLE_FILES"
+
+          if [ "$FAIL" -eq 0 ]; then
+            echo "Check 2 passed: Target SDK version is acceptable."
+          fi
+          exit "$FAIL"
+
+      # ---------------------------------------------------------------
+      # Check 3: Dangerous permissions have runtime handling
+      # Android requires runtime permission requests for dangerous
+      # permissions. Declaring them in the manifest without requesting
+      # them at runtime leads to crashes and poor UX.
+      # https://developer.android.com/training/permissions/requesting
+      # ---------------------------------------------------------------
+      - name: 'Check 3: Dangerous permissions have runtime handling'
+        if: steps.find-mobile.outputs.has_mobile_files == 'true'
+        continue-on-error: true
+        run: |
+          DANGEROUS_PERMISSIONS="CAMERA|RECORD_AUDIO|ACCESS_FINE_LOCATION|ACCESS_COARSE_LOCATION|READ_CONTACTS|READ_EXTERNAL_STORAGE|WRITE_EXTERNAL_STORAGE"
+
+          # Check for dangerous permissions in changed AndroidManifest.xml
+          MANIFEST_FILES=$(cat android_files.txt 2>/dev/null | grep 'AndroidManifest.xml' || true)
+          if [ -z "$MANIFEST_FILES" ]; then
+            echo "No AndroidManifest.xml in diff — permission check skipped."
+            exit 0
+          fi
+
+          FOUND_PERMISSIONS=""
+          while IFS= read -r file; do
+            MATCHES=$(grep -oE "android\.permission\.($DANGEROUS_PERMISSIONS)" "$file" 2>/dev/null | sort -u || true)
+            if [ -n "$MATCHES" ]; then
+              FOUND_PERMISSIONS="$FOUND_PERMISSIONS $MATCHES"
+              echo "$file: Dangerous permissions declared: $MATCHES"
+            fi
+          done <<< "$MANIFEST_FILES"
+
+          if [ -z "$FOUND_PERMISSIONS" ]; then
+            echo "No dangerous permissions declared in changed manifests."
+            exit 0
+          fi
+
+          # Check for runtime handling in changed Kotlin/Java/JS/TS files
+          CODE_FILES=$(cat android_files.txt 2>/dev/null | grep -E '\.(kt|java)$' || true)
+          RN_FILES=$(cat android_files.txt pkg_files.txt 2>/dev/null | grep -E '\.(js|ts|tsx|jsx)$' || true)
+          ALL_CODE="$CODE_FILES $RN_FILES"
+
+          RUNTIME_HANDLING_FOUND=false
+          for f in $ALL_CODE; do
+            if [ -f "$f" ] && grep -qE 'PermissionsAndroid|requestPermissions|checkSelfPermission|ActivityCompat\.requestPermissions' "$f" 2>/dev/null; then
+              RUNTIME_HANDLING_FOUND=true
+              break
+            fi
+          done
+
+          if [ "$RUNTIME_HANDLING_FOUND" = "false" ]; then
+            echo "::warning::Dangerous permissions declared in AndroidManifest.xml but no runtime permission request code found in changed files (PermissionsAndroid, requestPermissions, checkSelfPermission). Runtime handling may exist in unchanged files — verify. See: https://developer.android.com/training/permissions/requesting"
+          else
+            echo "Check 3 passed: Runtime permission handling found."
+          fi
+
+      # ---------------------------------------------------------------
+      # Check 4: No alternative payment processors used for in-app purchases
+      # Google Play's Payments Policy requires in-app purchases to use
+      # Google Play Billing. Using Stripe/PayPal/etc. for consumable
+      # or subscription purchases violates policy.
+      # https://support.google.com/googleplay/android-developer/answer/10281818
+      # ---------------------------------------------------------------
+      - name: 'Check 4: No alternative payment processors for in-app purchases'
+        if: steps.find-mobile.outputs.has_mobile_files == 'true'
+        continue-on-error: true
+        run: |
+          PAYMENT_SDK_PATTERN='stripe|paypal|braintree|square[_-]pay|adyen'
+          IAP_CONTEXT_PATTERN='purchase|subscription|consumable|in.app|buy.*item|unlock'
+
+          ALL_JS_FILES=$(cat android_files.txt pkg_files.txt 2>/dev/null | grep -E '\.(js|ts|tsx|jsx|json)$' || true)
+
+          for file in $ALL_JS_FILES; do
+            if [ -f "$file" ]; then
+              HAS_PAYMENT=$(grep -ciE "$PAYMENT_SDK_PATTERN" "$file" 2>/dev/null || echo 0)
+              HAS_IAP=$(grep -ciE "$IAP_CONTEXT_PATTERN" "$file" 2>/dev/null || echo 0)
+              if [ "$HAS_PAYMENT" -gt 0 ] && [ "$HAS_IAP" -gt 0 ]; then
+                echo "::warning file=$file::File contains both a third-party payment SDK ($PAYMENT_SDK_PATTERN) and in-app purchase context ($IAP_CONTEXT_PATTERN). Verify that in-app purchases use Google Play Billing, not an alternative processor. External payment for non-IAP flows (e.g., web subscriptions) is OK. See: https://support.google.com/googleplay/android-developer/answer/10281818"
+              fi
+            fi
+          done
+          echo "Check 4 complete: any findings above are informational warnings."
+
+      # ---------------------------------------------------------------
+      # Summary — always runs so policy metadata is visible in every log
+      # ---------------------------------------------------------------
+      - name: Policy summary
+        if: always()
+        run: |
+          echo "=============================================="
+          echo "  Google Play Store Policy Compliance Summary"
+          echo "=============================================="
+          echo "  Policy snapshot date : ${{ inputs.policy-version }}"
+          echo "  Repo                 : ${{ github.repository }}"
+          echo ""
+          echo "  Policy references:"
+          echo "    Developer Program Policies   : https://play.google.com/about/developer-content-policy/"
+          echo "    Distribution Agreement       : https://play.google.com/about/developer-distribution-agreement.html"
+          echo "    Play Billing Library         : https://developer.android.com/google/play/billing"
+          echo "    Target API requirements      : https://support.google.com/googleplay/android-developer/answer/11926878"
+          echo "    Runtime permissions          : https://developer.android.com/training/permissions/requesting"
+          echo ""
+          echo "  All checks run with continue-on-error: true (warnings, not merge blockers)."
+          echo "  To harden: remove continue-on-error after gaming_app reaches stable compliance."
+          echo ""
+          echo "  To update after a Google Play policy change:"
+          echo "    1. Review the policy pages above for new requirements"
+          echo "    2. Update grep patterns in called-google-play-policy.yml if needed"
+          echo "    3. Bump policy-version default to today's date"
+          echo "    4. Open a PR to wcmchenry3-stack/.github"
+          echo "=============================================="
