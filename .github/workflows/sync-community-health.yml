@@ -5,7 +5,7 @@ name: Sync Community Health Files
 #
 # Required secret: COMMUNITY_HEALTH_SYNC_PAT
 #   Fine-grained PAT with Contents: write + Pull requests: write on all repos
-#   listed in the matrix below: gaming_app, office_holder_cursor, book_app,
+#   listed in the matrix below: gaming_app, RulersAI, book_app,
 #   powerplayshistory_site, wcm_portfolio_site, buffingchi_site.
 #   A classic PAT with `repo` scope also works.
 
@@ -32,7 +32,7 @@ jobs:
       matrix:
         repo:
           - gaming_app
-          - office_holder_cursor
+          - RulersAI
           - book_app
           - powerplayshistory_site
           - wcm_portfolio_site

@@ -26,5 +26,5 @@ defaults:
 overrides: {}
   # book_app:
   #   openai: required
-  # office_holder_cursor:
+  # RulersAI:
   #   gemini: required
