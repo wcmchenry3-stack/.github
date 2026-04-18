@@ -146,29 +146,37 @@ jobs:
       # ---------------------------------------------------------------
       # Check 4: No raw HTML scraping
       # Code must use the official Wikimedia REST API (/w/api.php or
-      # api.wikimedia.org), not scrape rendered HTML pages.
+      # /w/rest.php/v1/...), not fetch rendered HTML pages directly.
+      #
+      # Permitted: fetching /w/rest.php/v1/page/{title}/html via the
+      # REST API, then parsing the response with BeautifulSoup or lxml.
+      # Violation: requesting wikipedia.org/wiki/ (human-readable) URLs
+      # directly via requests.get/fetch, regardless of parser used.
+      #
       # https://www.mediawiki.org/wiki/API:Main_page
       # ---------------------------------------------------------------
       - name: 'Check 4: No raw HTML scraping'
         if: steps.find-wiki.outputs.has_wiki_files == 'true'
         run: |
           FAIL=0
-          # Detect HTML-scraping libraries in files that also call Wikipedia
-          SCRAPE_LIBS="BeautifulSoup|lxml\.html|from scrapy|import scrapy|html\.parser"
-          # Detect direct requests to the human-readable wiki URL (not the API)
-          WIKI_HTML_URL="requests\.(get|post)\s*\([^)]*wikipedia\.org/wiki/"
+          # The real violation: fetching human-readable rendered wiki pages directly.
+          # Using /w/rest.php/v1/page/{title}/html (REST API) is permitted.
+          WIKI_HTML_URL='requests\.(get|post)\s*\([^)]*wikipedia\.org/wiki/'
+          # HTML-parsing libraries are permitted when the HTML comes from the REST API.
+          # Flag as a notice so reviewers can verify the fetch path if needed.
+          SCRAPE_LIBS="BeautifulSoup|lxml\.html|from scrapy|import scrapy"
           while IFS= read -r file; do
-            if grep -qE "$SCRAPE_LIBS" "$file"; then
-              echo "::error file=$file::HTML-scraping library detected alongside Wikipedia API calls. Use the official Wikimedia REST API instead of scraping rendered pages. See: https://www.mediawiki.org/wiki/API:Main_page"
+            if grep -qP "$WIKI_HTML_URL" "$file" 2>/dev/null || \
+               grep -qE "fetch\(['\"]https?://[a-z]+\.wikipedia\.org/wiki/" "$file"; then
+              echo "::error file=$file::Direct request to wikipedia.org/wiki/ (human-readable URL) detected. Fetch content via the Wikimedia REST API (/w/rest.php/v1/page/{title}/html) instead. See: https://www.mediawiki.org/wiki/API:Main_page"
               FAIL=1
             fi
-            if grep -qP "$WIKI_HTML_URL" "$file" 2>/dev/null || grep -qE "fetch\(['\"]https?://[a-z]+\.wikipedia\.org/wiki/" "$file"; then
-              echo "::error file=$file::Direct request to wikipedia.org/wiki/ (human-readable URL) detected. Use /w/api.php or api.wikimedia.org instead. See: https://www.mediawiki.org/wiki/API:Main_page"
-              FAIL=1
+            if grep -qE "$SCRAPE_LIBS" "$file"; then
+              echo "::notice file=$file::HTML-parsing library detected. This is permitted when parsing responses from the Wikimedia REST API. Ensure no requests are made directly to wikipedia.org/wiki/ URLs."
             fi
           done < wiki_files.txt
           if [ "$FAIL" -eq 0 ]; then
-            echo "Check 4 passed: No HTML scraping patterns detected."
+            echo "Check 4 passed: No direct requests to rendered Wikipedia pages detected."
           fi
           exit "$FAIL"
 
