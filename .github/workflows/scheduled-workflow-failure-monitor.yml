@@ -21,7 +21,7 @@ jobs:
           ORG: wcmchenry3-stack
         run: |
           # Repos to monitor (space-separated)
-          REPOS="gaming_app office_holder_cursor powerplayshistory_site book_app wcm_portfolio_site buffingchi_site"
+          REPOS="BC-Arcade RulersAI powerplayshistory_site BookshelfAI wcm_portfolio_site buffingchi_site"
 
           # Look back window: last 25 hours to avoid gaps between runs
           SINCE=$(date -u -d '25 hours ago' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null \
