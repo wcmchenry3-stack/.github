@@ -292,6 +292,16 @@ Render's build environment mirrors `npm ci` behavior. Using `npm install` in a d
 script can silently resolve different versions than CI tested against. The
 `called-render-preflight.yml` workflow explicitly validates this before deploy.
 
+## Available Agents
+
+These project subagents live in `.claude/agents/` and are invoked via the `Agent` tool (not Skill). Always prefer them over a general-purpose agent for their domain.
+
+| Agent | `subagent_type` | When to use |
+|---|---|---|
+| lint-review | `lint-review` | Auto-fix lint issues after a lint-gate hook failure (see lint-review section above) |
+| plan-issues | `plan-issues` | Break a feature/bug/initiative into scoped GitHub issues — investigates code first, drafts for confirmation, then calls `gh issue create` |
+| policy-compliance | `policy-compliance` | Check and fix policy violations after a policy-gate hook failure (see policy-compliance section above) |
+
 ## Conventions
 
 - Workflows are prefixed `called-` and use `workflow_call` triggers.
