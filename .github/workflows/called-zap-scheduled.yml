@@ -13,9 +13,7 @@ on:
         type: string
         required: true
       branches:
-        description: >
-          Comma-separated list of branches that should run the scan.
-          Leave empty to always run (default). Example: "main,dev"
+        description: 'Comma-separated branches to scan, e.g. "main,dev". Leave empty to always run.'
         type: string
         required: false
         default: ''
@@ -33,7 +31,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v6
-      - name: Guard – branch filter
+      - name: Guard - branch filter
         id: guard
         run: |
           BRANCHES="${{ inputs.branches }}"
@@ -44,25 +42,17 @@ jobs:
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
-            echo "⏭ Skipping ZAP scan: branch '$CURRENT' not in [$BRANCHES]"
+            echo "Skipping ZAP scan: branch '$CURRENT' not in [$BRANCHES]"
           fi
-      - name: Resolve scan URL
-        id: scan-url
-        run: |
-          URL="${{ secrets.target-url-secret }}"
-          if [ -z "$URL" ]; then
-            URL="${{ inputs.target-url }}"
-          fi
-          echo "value=$URL" >> "$GITHUB_OUTPUT"
       - name: Run ZAP baseline scan
-        if: ${{ steps.guard.outputs.run == 'true' && steps.scan-url.outputs.value != '' }}
+        if: ${{ steps.guard.outputs.run == 'true' && (secrets.target-url-secret != '' || inputs.target-url != '') }}
         uses: zaproxy/action-baseline@v0.15.0
         with:
-          target: ${{ steps.scan-url.outputs.value }}
+          target: ${{ secrets.target-url-secret || inputs.target-url }}
           fail_action: false
       - name: Upload ZAP report
+        if: ${{ steps.guard.outputs.run == 'true' && (secrets.target-url-secret != '' || inputs.target-url != '') }}
         uses: actions/upload-artifact@v7
-        if: ${{ steps.guard.outputs.run == 'true' && steps.scan-url.outputs.value != '' }}
         with:
           name: ${{ inputs.artifact-name }}-${{ github.run_id }}
           path: report_html.html
