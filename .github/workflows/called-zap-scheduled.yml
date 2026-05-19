@@ -46,7 +46,7 @@ jobs:
           fi
       - name: Run ZAP baseline scan
         if: ${{ steps.guard.outputs.run == 'true' && (secrets.target-url-secret != '' || inputs.target-url != '') }}
-        uses: zaproxy/action-baseline@v0.9.0
+        uses: zaproxy/action-baseline@v0.15.0
         with:
           target: ${{ secrets.target-url-secret || inputs.target-url }}
           fail_action: false
