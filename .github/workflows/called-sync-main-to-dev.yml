@@ -11,7 +11,6 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: actions/checkout@v6
       - name: Open draft sync PR
         run: |
           if gh pr list --base dev --head main --state open --json number --jq '.[0].number' | grep -q '[0-9]'; then
