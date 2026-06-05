@@ -5,11 +5,11 @@ name: Commitlint (reusable)
 # release-please reads these messages to determine version bumps.
 #
 # Bump rules (pre-1.0.0, bump-minor-pre-major enabled):
-#   feat:       → minor bump  (0.1.0 → 0.2.0)
-#   fix: perf:  → patch bump  (0.2.0 → 0.2.1)
-#   feat!:      → major bump  (0.2.1 → 1.0.0)
+#   feat:       -> minor bump  (0.1.0 -> 0.2.0)
+#   fix: perf:  -> patch bump  (0.2.0 -> 0.2.1)
+#   feat!:      -> major bump  (0.2.1 -> 1.0.0)
 #   chore: docs: ci: test: style: refactor: build:
-#               → no bump, hidden from CHANGELOG
+#               -> no bump, hidden from CHANGELOG
 
 on:
   workflow_call:
@@ -38,6 +38,4 @@ jobs:
             build
           requireScope: false
           subjectPattern: ^.{1,72}$
-          subjectPatternError: >
-            PR title subject must be 1–72 characters.
-            Example: "feat: add leaderboard" or "fix: correct login redirect"
+          subjectPatternError: 'PR title subject must be 1-72 characters. Use conventional format, e.g. feat: add feature or fix: correct bug.'
