@@ -12,6 +12,13 @@ updates:
     labels:
       - "dependencies"
       - "ci"
+    ignore:
+      # v5+ does not exist; latest is v4
+      - dependency-name: "actions/checkout"
+        versions: [">=5"]
+      # v5+ does not exist; latest is v4
+      - dependency-name: "actions/upload-artifact"
+        versions: [">=5"]
 
   # Cloudflare Email Worker (Node.js)
   - package-ecosystem: "npm"
