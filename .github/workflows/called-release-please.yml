@@ -18,9 +18,7 @@ on:
   workflow_call:
     secrets:
       release-token:
-        description: >
-          Optional fine-grained PAT with contents:write and pull-requests:write.
-          Falls back to the default GITHUB_TOKEN if not provided.
+        description: 'Optional fine-grained PAT with contents:write and pull-requests:write. Falls back to GITHUB_TOKEN if not provided.'
         required: false
 
 jobs:
