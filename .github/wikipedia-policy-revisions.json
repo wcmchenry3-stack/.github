@@ -1,5 +1,5 @@
 {
-  "last_checked": "2026-06-01",
+  "last_checked": "2026-07-01",
   "pages": {
     "API:Etiquette": {
       "revid": 8373208,
@@ -10,7 +10,7 @@
       "url": "https://foundation.wikimedia.org/wiki/Policy:Terms_of_Use"
     },
     "API:REST_API": {
-      "revid": 8349482,
+      "revid": 8454981,
       "url": "https://www.mediawiki.org/wiki/API:REST_API"
     }
   }
