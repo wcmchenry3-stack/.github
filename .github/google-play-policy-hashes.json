@@ -1,13 +1,13 @@
 {
-  "last_checked": "2026-06-15",
+  "last_checked": "2026-07-15",
   "pages": {
     "developer-content-policy": {
       "url": "https://play.google.com/about/developer-content-policy/",
-      "sha256": "15ce7f268b1ece6c824547b392cad8c751434ffd16fde5c1731381b00158329a"
+      "sha256": "300b2eec9535263d0e412224df8d43e6c6499dc3015f59ddf7f1c84cd9768b3f"
     },
     "developer-distribution-agreement": {
       "url": "https://play.google.com/about/developer-distribution-agreement.html",
-      "sha256": "6da88bf73254e3633d5db3da1919d6c96bf21a2800ea054eed9283a8b52714ad"
+      "sha256": "801da78091ee79854a147e644bc90b39e1468ecee4155f7f110c4c4734b4de95"
     }
   }
 }
