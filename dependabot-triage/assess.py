@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import UTC, datetime
 from pathlib import Path
 
 from budget import should_chunk
@@ -67,9 +68,15 @@ def _describe_pr(pr: PullRequest, required: frozenset[str], base: str) -> str:
     return "\n".join(lines)
 
 
-def build_corpus(harvests: list[RepoHarvest]) -> str:
-    """Assemble the evidence for every open Dependabot PR across the stack."""
-    blocks: list[str] = []
+def build_corpus(harvests: list[RepoHarvest], today: str | None = None) -> str:
+    """Assemble the evidence for every open Dependabot PR across the stack.
+
+    The date is stated explicitly because Q13 asks how fresh a release is, and a
+    model with no reference point will guess. An adversarial reviewer once
+    blocked a good merge by calling week-old changelog dates "future-dated".
+    """
+    today = today or datetime.now(UTC).strftime("%Y-%m-%d")
+    blocks: list[str] = [f"Today's date is {today}."]
     for harvest in harvests:
         prs = harvest.dependabot_prs
         if not prs:
@@ -99,9 +106,10 @@ def assess(harvests: list[RepoHarvest], client: Client, config: dict) -> dict[st
     Any PR the model fails to return an assessment for is defaulted to MEDIUM —
     a silent omission must never read as permission to merge.
     """
-    corpus = build_corpus(harvests)
-    if not corpus:
+    pr_total = sum(len(h.dependabot_prs) for h in harvests)
+    if pr_total == 0:
         return {}
+    corpus = build_corpus(harvests)
 
     model = config["models"]["assess"]
     effort = config["effort"]["assess"]
@@ -109,7 +117,7 @@ def assess(harvests: list[RepoHarvest], client: Client, config: dict) -> dict[st
     max_prs = config["budget"].get("max_prs_per_assessment", 8)
     max_out = config["budget"].get("assessment_max_output_tokens", 32000)
 
-    pr_count = sum(len(h.dependabot_prs) for h in harvests)
+    pr_count = pr_total
     token_count = client.count_tokens(model, ASSESS_PROMPT, corpus)
     log.info("assessment corpus is %d tokens across %d PR(s)", token_count, pr_count)
 

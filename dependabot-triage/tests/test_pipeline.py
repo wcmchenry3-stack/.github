@@ -11,7 +11,7 @@ import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from conftest import make_pr
+from conftest import make_baseline, make_pr
 
 import budget as budget_mod
 import execute as execute_mod
@@ -531,3 +531,53 @@ def test_unreadable_protection_is_a_distinct_exception_type():
     import gh
 
     assert issubclass(gh.ProtectionUnreadable, gh.GhError)
+
+
+# ---------------------------------------------------------------------------
+# The autonomy rate must measure the agent, not repo health
+# ---------------------------------------------------------------------------
+
+
+def test_already_red_prs_are_excluded_from_the_denominator():
+    """A PR whose CI was red before the run was never mergeable by anyone.
+
+    The first full run merged 3 of 18, which read as a 17% autonomy rate. Six of
+    those PRs had failing required checks before the run started and eight were
+    majors that are never auto-merged by policy — the genuinely eligible pool was
+    four. Counting the unmergeable ones makes the metric track repo health.
+    """
+    decisions = [
+        _decision(number=1),
+        _decision(number=2, merged=False, action=Action.COMMENT, pre_existing_red=True),
+        _decision(number=3, merged=False, action=Action.COMMENT, pre_existing_red=True),
+    ]
+    stats = metrics_mod.summarise(decisions)
+    assert stats["pre_existing_red"] == 2
+    assert stats["eligible"] == 1
+    assert stats["autonomy_rate"] == 1.0
+
+
+def test_rolling_window_also_excludes_already_red(tmp_path, monkeypatch):
+    monkeypatch.setattr(metrics_mod, "HISTORY_DIR", tmp_path)
+    metrics_mod.record_run(
+        [
+            _decision(number=1),
+            _decision(number=2, merged=False, action=Action.COMMENT, pre_existing_red=True),
+        ],
+        {},
+        run_id="r",
+        now=NOW,
+        dry_run=False,
+    )
+    assert metrics_mod.rolling(now=NOW + timedelta(hours=1))["autonomy_rate"] == 1.0
+
+
+def test_corpus_states_todays_date_for_recency_questions():
+    """Q13 asks how fresh a release is; without a date the model guesses."""
+    import assess as assess_mod
+    from harvest import RepoHarvest
+
+    h = RepoHarvest(
+        repo="r", base="dev", merge_method="squash", baseline=make_baseline(), prs=[make_pr()]
+    )
+    assert "Today's date is 2026-03-04." in assess_mod.build_corpus([h], today="2026-03-04")

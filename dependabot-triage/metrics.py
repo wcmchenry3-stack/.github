@@ -69,6 +69,7 @@ def record_run(
                     "merged": decision.merged,
                     "rebased": decision.rebased,
                     "deferred": decision.deferred,
+                    "pre_existing_red": decision.pre_existing_red,
                     "deciding_question": decision.deciding_question,
                     "failed_guard": decision.failed_guard,
                     "reason": decision.reason,
@@ -106,10 +107,10 @@ def summarise(decisions: list[Decision]) -> dict:
     deferred = [d for d in decisions if d.deferred]
     blocked = [d for d in decisions if d.action is Action.SKIP]
 
-    # A PR that was already red before the run started, through no fault of the
-    # bump, was never mergeable tonight — counting it against the agent would
+    # A PR that was already red before the run started, or that the run never got
+    # to, was never mergeable tonight — counting either against the agent would
     # make the autonomy rate measure repo health rather than agent behaviour.
-    eligible = [d for d in decisions if not d.deferred]
+    eligible = [d for d in decisions if not d.deferred and not d.pre_existing_red]
 
     return {
         "seen": len(decisions),
@@ -117,6 +118,7 @@ def summarise(decisions: list[Decision]) -> dict:
         "rebased_then_merged": len([d for d in merged if d.rebased]),
         "deferred": len(deferred),
         "blocked_by_guard": len(blocked),
+        "pre_existing_red": len([d for d in decisions if d.pre_existing_red]),
         "eligible": len(eligible),
         "autonomy_rate": round(len(merged) / len(eligible), 4) if eligible else None,
         "by_tier": dict(Counter(d.tier.value for d in decisions)),
@@ -170,7 +172,7 @@ def rolling(days: int = 30, now: datetime | None = None) -> dict:
         return {"window_days": days, "decisions": 0, "autonomy_rate": None, "merged": 0}
 
     merged = [d for d in decisions if d.get("merged")]
-    eligible = [d for d in decisions if not d.get("deferred")]
+    eligible = [d for d in decisions if not d.get("deferred") and not d.get("pre_existing_red")]
     return {
         "window_days": days,
         "decisions": len(decisions),

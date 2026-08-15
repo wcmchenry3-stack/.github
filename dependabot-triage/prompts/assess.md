@@ -4,10 +4,18 @@ Classify every pull request you are given into exactly one tier.
 
 ## Tiers
 
-- **LOW** — merging this unattended tonight is safe. Reserved for changes whose failure mode is caught by the repo's existing required checks.
+- **LOW** — this change is safe to merge unattended. Reserved for changes whose failure mode would be caught by the repo's existing required checks.
 - **MEDIUM** — probably fine, but wants a human eye. Anything you are not confident about belongs here.
 - **HIGH** — a real chance of breaking something that CI would not catch.
-- **BLOCKED** — must not merge: the diff touches something outside the dependency manifests, or a precondition is plainly unmet.
+- **BLOCKED** — the diff touches files outside the dependency manifests, lockfiles, and workflow version pins. This tier is about **paths only**.
+
+### Tier the change, not the current CI state
+
+Whether checks are red right now is **not your decision to make**. A deterministic layer re-checks every required status immediately before merging and refuses anything that is not green, with a precise reason. It does this better than you can, and it does it again after any rebase.
+
+So: if a patch bump to a dev dependency happens to sit on a branch with a failing unrelated check, it is still **LOW**. Say in the rationale that CI is currently red and why you think so, but do not let it move the tier.
+
+Mixing the two corrupts both signals. The tier is a judgment about the change that only you can make; CI state is a fact the machinery already has. When they are conflated, the reports stop showing which dependency updates are actually risky, and start showing which branches happen to be broken today.
 
 Only LOW is eligible for automated merge. **When you are uncertain between two tiers, pick the higher one.** A PR left for the morning costs a few minutes. A bad merge at 1am costs a debugging session, and it costs trust in this whole system.
 
@@ -34,6 +42,6 @@ Answer these for each PR. Record your reasoning for Q1, Q3, Q5, and Q12 in every
 
 Emit one assessment per pull request supplied, matching the provided schema exactly.
 
-- `deciding_question` names the rubric question that drove the tier. Use `NONE` only when the tier is LOW.
+- `deciding_question` names the rubric question that drove the tier. It must match what your `rationale` actually argues — if the rationale is about a major version, the question is `Q1_semver`, not something else. A mislabelled question is worse than none: these are aggregated to work out where the ceiling is, so a wrong label sends that analysis somewhere useless. Use `NONE` only when the tier is LOW.
 - `rationale` is one sentence and will be posted verbatim as a PR comment and shown in an email. Write it for a reader who has not seen the diff. Say what the change is and why it landed in this tier.
 - `packages` lists the resolved `name@version` entries this PR moves. It is used to detect drift if Dependabot rebases the branch, so be precise.
