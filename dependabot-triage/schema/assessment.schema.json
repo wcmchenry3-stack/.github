@@ -1,0 +1,89 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["assessments"],
+  "properties": {
+    "assessments": {
+      "type": "array",
+      "description": "One entry per pull request supplied, in any order.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "repo",
+          "number",
+          "tier",
+          "merge_order",
+          "rationale",
+          "deciding_question",
+          "packages",
+          "evidence"
+        ],
+        "properties": {
+          "repo": { "type": "string" },
+          "number": { "type": "integer" },
+          "tier": {
+            "type": "string",
+            "enum": ["LOW", "MEDIUM", "HIGH", "BLOCKED"],
+            "description": "Only LOW is eligible for an automated merge."
+          },
+          "merge_order": {
+            "type": "integer",
+            "description": "Ascending order within a repo. Equal values mean order does not matter."
+          },
+          "rationale": {
+            "type": "string",
+            "description": "One sentence, written for the PR comment and the email."
+          },
+          "deciding_question": {
+            "type": "string",
+            "enum": [
+              "Q1_semver",
+              "Q2_transitive",
+              "Q3_ecosystem",
+              "Q4_runtime_path",
+              "Q5_peer_coupling",
+              "Q6_group",
+              "Q7_stray_paths",
+              "Q8_security_surface",
+              "Q9_changelog",
+              "Q10_pinned_runtime",
+              "Q11_ordering",
+              "Q12_ci_coverage",
+              "Q13_version_age",
+              "Q14_deploy_reach",
+              "NONE"
+            ],
+            "description": "Which rubric question drove the tier. NONE only when tier is LOW."
+          },
+          "packages": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Resolved package@version list, used to detect drift after a rebase."
+          },
+          "evidence": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["Q1_semver", "Q3_ecosystem", "Q5_peer_coupling", "Q12_ci_coverage"],
+            "properties": {
+              "Q1_semver": { "type": "string" },
+              "Q2_transitive": { "type": "string" },
+              "Q3_ecosystem": { "type": "string" },
+              "Q4_runtime_path": { "type": "string" },
+              "Q5_peer_coupling": { "type": "string" },
+              "Q6_group": { "type": "string" },
+              "Q7_stray_paths": { "type": "string" },
+              "Q8_security_surface": { "type": "string" },
+              "Q9_changelog": { "type": "string" },
+              "Q10_pinned_runtime": { "type": "string" },
+              "Q11_ordering": { "type": "string" },
+              "Q12_ci_coverage": { "type": "string" },
+              "Q13_version_age": { "type": "string" },
+              "Q14_deploy_reach": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

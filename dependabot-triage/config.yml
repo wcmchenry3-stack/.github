@@ -1,0 +1,78 @@
+# Dependabot triage agent — runtime configuration.
+#
+# Every limit here is a safety valve. Raising one widens the blast radius of a
+# misclassification, so change them one at a time and watch the precision metric
+# in the nightly email before going further.
+
+owner: wcmchenry3-stack
+
+# Repos are opted in individually. `enabled: false` is the per-repo kill switch;
+# it is honoured before any API call is made against that repo.
+repos:
+  - name: powerplayshistory_site
+    enabled: true
+    base: dev
+    merge_method: merge # ruleset on this repo forbids squash
+  - name: buffingchi_site
+    enabled: false
+    base: dev
+    merge_method: merge
+  - name: BC-Arcade
+    enabled: false
+    base: dev
+    merge_method: squash
+  - name: BookshelfAI
+    enabled: false
+    base: dev
+    merge_method: merge
+  - name: wcm_portfolio_site
+    enabled: false
+    base: dev
+    merge_method: merge
+  - name: RulersAI
+    enabled: false
+    base: dev
+    merge_method: merge
+
+# Blast-radius caps. A bad classification cannot cascade across the stack
+# before the morning email lands.
+caps:
+  max_merges_per_repo: 5
+  max_merges_total: 15
+
+# Wall-clock budgets, in seconds.
+timeouts:
+  rebase_wait: 1200 # 20 min for Dependabot to land a rebase, then defer
+  checks_wait: 2700 # 45 min, sized for BC-Arcade's 20-30 min CI
+  poll_interval: 60
+  global_wall_clock: 14400 # 4 h; job timeout-minutes is set slightly above this
+
+# Spend ceilings in USD, enforced in code against real `usage` blocks.
+budget:
+  max_per_run: 1.00
+  max_per_month: 20.00
+  # Corpus larger than this is split per-repo rather than sent as one request.
+  assessment_token_ceiling: 150000
+
+models:
+  assess: claude-sonnet-5
+  adversary: claude-haiku-4-5
+  diagnose: claude-haiku-4-5
+  delta: claude-haiku-4-5
+  summary: claude-haiku-4-5
+  escalate: claude-opus-5 # workflow_dispatch only, never the nightly path
+
+effort:
+  assess: medium
+  adversary: low
+  diagnose: low
+  delta: low
+  summary: low
+
+# Per-PR kill switch.
+hold_label: "dependabot-triage:hold"
+
+report:
+  from_address: "dependabot-triage@mail.buffingchi.com"
+  to_address: "wcmchenry3@gmail.com"
+  subject_prefix: "Dependabot Triage"
