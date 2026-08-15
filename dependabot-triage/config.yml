@@ -79,6 +79,28 @@ effort:
   delta: "" # claude-haiku-4-5 — not supported
   summary: "" # claude-haiku-4-5 — not supported
 
+# Adversarial second opinion on every LOW rating — DISABLED.
+#
+# The idea was a cheap independent reviewer arguing against each proposed merge,
+# to counteract the assessor's bias toward finishing the task. In practice it
+# raised three objections across four runs and all three were fabrications:
+#
+#   1. called changelog dates 2026-08-07 / 2026-08-05 "future-dated" (both past)
+#   2. claimed sharp was pinned to "latest-minor" (real diff: ^0.35.2 -> ^0.35.3)
+#   3. called a 2026-08-01 changelog entry "in the future" (14 days past)
+#
+# Zero real issues found, three good merges blocked. Objections 1 and 3 are the
+# same date-comparison error, and 3 was made *after* the prompt was given both
+# today's date and the manifest diff — so the failure survived the two fixes
+# aimed directly at it.
+#
+# Asking a small model to manufacture a specific objection reliably produces a
+# specific objection, whether or not one exists. The deterministic guards remain
+# the real safety layer, and unlike this they are 100% covered and cannot invent
+# anything. Set to true to re-enable, ideally on a stronger model first.
+adversary:
+  enabled: false
+
 # Per-PR kill switch.
 hold_label: "dependabot-triage:hold"
 

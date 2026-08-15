@@ -28,6 +28,7 @@ CONFIG = {
         "global_wall_clock": 14400,
     },
     "hold_label": "dependabot-triage:hold",
+    "adversary": {"enabled": True},
     "models": {
         "assess": "claude-sonnet-5",
         "adversary": "claude-haiku-4-5",
@@ -474,3 +475,24 @@ def test_lockfile_only_pr_tells_the_adversary_so_explicitly():
     pr = make_pr(files=[ChangedFile(path="package-lock.json", patch="@@\n+ x\n")])
     _run([_harvest([pr])], {pr.slug: _low(pr)}, Recorder())
     assert "lockfile-only update" in seen["adversary"]
+
+
+def test_adversary_is_skipped_when_disabled():
+    """Disabled by default after 3 objections, 3 fabrications, 0 real catches."""
+    config = {**CONFIG, "adversary": {"enabled": False}}
+    pr = make_pr()
+    client = FakeClient(adversary="UNSAFE: something invented")
+    result = execute_mod.execute(
+        [_harvest([pr])], {pr.slug: _low(pr)}, client, config, dry_run=True
+    )
+    assert "adversary" not in client.calls
+    assert result.decisions[0].action is Action.MERGE
+
+
+def test_absent_adversary_config_defaults_to_off():
+    """A missing key must not silently re-enable a layer we switched off."""
+    config = {k: v for k, v in CONFIG.items() if k != "adversary"}
+    pr = make_pr()
+    client = FakeClient(adversary="UNSAFE: invented")
+    execute_mod.execute([_harvest([pr])], {pr.slug: _low(pr)}, client, config, dry_run=True)
+    assert "adversary" not in client.calls
