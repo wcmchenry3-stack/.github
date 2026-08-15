@@ -14,23 +14,23 @@ repos:
     base: dev
     merge_method: merge # ruleset on this repo forbids squash
   - name: buffingchi_site
-    enabled: false
+    enabled: true
     base: dev
     merge_method: merge
   - name: BC-Arcade
-    enabled: false
+    enabled: true
     base: dev
     merge_method: squash
   - name: BookshelfAI
-    enabled: false
+    enabled: true
     base: dev
     merge_method: merge
   - name: wcm_portfolio_site
-    enabled: false
+    enabled: true
     base: dev
     merge_method: merge
   - name: RulersAI
-    enabled: false
+    enabled: true
     base: dev
     merge_method: merge
 
