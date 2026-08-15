@@ -106,12 +106,63 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     # --- Phase 1 ---------------------------------------------------------
-    harvests = harvest_mod.harvest_all(config)
+    # A permission gap here must not look like a quiet night. Reading branch
+    # protection needs 'Administration: Read'; without it the API's refusal is
+    # easy to mistake for "no checks are required", which would make the agent
+    # silently refuse every PR while appearing to work.
+    try:
+        harvests = harvest_mod.harvest_all(config)
+    except gh.ProtectionUnreadable as exc:
+        log.error("%s", exc)
+        stats = metrics.summarise([])
+        body = report_mod.render_html(
+            summary="",
+            decisions=[],
+            stats=stats,
+            rolling=metrics.rolling(now=now),
+            precision=metrics.precision(now=now),
+            budget=budget.summary(),
+            run_url=args.run_url,
+            when=now,
+            dry_run=args.dry_run,
+            aborted=str(exc),
+        )
+        report_mod.send(
+            body,
+            report_mod.subject_line(stats, config, now, aborted=str(exc)),
+            config,
+            dry_run=args.dry_run,
+        )
+        return 1
+
     open_prs = [pr for h in harvests for pr in h.dependabot_prs]
 
     if not open_prs:
         log.info("no open Dependabot PRs; exiting before any model call")
         stats = metrics.summarise([])
+        # Write the ledger even on the quiet path, so "no artifact" always means
+        # the job died rather than "there was nothing to do".
+        args.ledger.parent.mkdir(parents=True, exist_ok=True)
+        args.ledger.write_text(
+            json.dumps(
+                {
+                    "run_id": args.run_id,
+                    "at": now.isoformat(),
+                    "dry_run": args.dry_run,
+                    "aborted": "",
+                    "stats": stats,
+                    "budget": budget.summary(),
+                    "decisions": [],
+                    "repos_checked": [
+                        {"repo": h.repo, "required_checks": sorted(h.baseline.required_contexts)}
+                        for h in harvests
+                    ],
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
         body = report_mod.render_html(
             summary="No open Dependabot pull requests tonight; nothing to do.",
             decisions=[],

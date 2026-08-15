@@ -94,7 +94,7 @@ staged-rollout starting point.
 |---|---|
 | `ANTHROPIC_API_KEY` | Model calls. Pay-as-you-go API billing, deliberately separate from any Claude Code subscription — this job cannot consume interactive usage. |
 | `RESEND_API_KEY` | The nightly email. One message a day sits far inside Resend's free tier. |
-| `DEPENDABOT_TRIAGE_TOKEN` | Cross-repo PR access. Fine-grained, `Pull requests: RW` + `Contents: RW` + `Metadata: R`, and deliberately **no** `Administration` or `Actions`. |
+| `DEPENDABOT_TRIAGE_TOKEN` | Cross-repo PR access. Fine-grained: `Pull requests: RW`, `Contents: RW`, `Metadata: R`, and `Administration: **Read**` — required to read which status checks a branch mandates. Read-only is the point: the agent must be able to *see* branch protection to enforce G06 and G07, and must never be able to *change* it. Deliberately **no** `Actions`, no `Administration: Write`. |
 
 The workflow's own `GITHUB_TOKEN` commits the metrics history and is scoped to
 this repository only, so the two credentials stay separate.

@@ -23,6 +23,33 @@ class GhError(RuntimeError):
     """A ``gh`` invocation failed."""
 
 
+class ProtectionUnreadable(GhError):
+    """Branch protection exists but this token is not allowed to read it.
+
+    Reading branch protection requires ``Administration: Read``. Without it the
+    API answers with a permission error that is easy to mistake for "this branch
+    has no protection" — and that mistake is dangerous in both directions: it
+    makes a protected repo look unprotected, and it makes a token-permission
+    problem look like a repo-configuration problem. The run aborts instead.
+    """
+
+
+# Substrings GitHub uses when a token lacks the permission, as opposed to when
+# the resource genuinely does not exist.
+_PERMISSION_MARKERS = (
+    "resource not accessible",
+    "must have admin rights",
+    "not accessible by integration",
+    "requires authentication",
+    "403",
+)
+
+
+def _is_permission_error(exc: GhError) -> bool:
+    text = str(exc).lower()
+    return any(marker in text for marker in _PERMISSION_MARKERS)
+
+
 def _run(args: list[str], *, timeout: int = 120) -> str:
     """Execute ``gh`` with an argument list and return stdout."""
     log.debug("gh %s", " ".join(args))
@@ -119,6 +146,10 @@ def required_contexts(repo: str, owner: str, branch: str) -> frozenset[str]:
 
     Repos in this org use both mechanisms, and a repo may have neither — in which
     case the empty set is returned and guard G06 refuses to auto-merge there.
+
+    Raises :class:`ProtectionUnreadable` when the token lacks permission to read
+    protection. An empty result must only ever mean "nothing is required here",
+    never "I was not allowed to look".
     """
     contexts: set[str] = set()
     try:
@@ -128,7 +159,13 @@ def required_contexts(repo: str, owner: str, branch: str) -> frozenset[str]:
         for entry in checks.get("checks") or []:
             if entry.get("context"):
                 contexts.add(entry["context"])
-    except GhError:
+    except GhError as exc:
+        if _is_permission_error(exc):
+            raise ProtectionUnreadable(
+                f"cannot read branch protection for {owner}/{repo}@{branch}. "
+                "The token needs 'Administration: Read'. Read-only is sufficient — "
+                "it does not allow changing protection."
+            ) from exc
         log.info("%s/%s has no classic branch protection on %s", owner, repo, branch)
 
     try:
@@ -144,7 +181,12 @@ def required_contexts(repo: str, owner: str, branch: str) -> frozenset[str]:
                 for entry in params.get("required_status_checks") or []:
                     if entry.get("context"):
                         contexts.add(entry["context"])
-    except GhError:
+    except GhError as exc:
+        if _is_permission_error(exc):
+            raise ProtectionUnreadable(
+                f"cannot read rulesets for {owner}/{repo}. "
+                "The token needs 'Administration: Read'."
+            ) from exc
         log.info("%s/%s exposes no rulesets", owner, repo)
 
     return frozenset(contexts)
