@@ -23,6 +23,7 @@ log = logging.getLogger(__name__)
 
 SUMMARY_PROMPT = (Path(__file__).parent / "prompts" / "summary.md").read_text(encoding="utf-8")
 RESEND_ENDPOINT = "https://api.resend.com/emails"
+USER_AGENT = "wcmchenry3-stack-dependabot-triage/1.0 (+https://github.com/wcmchenry3-stack/.github)"
 
 TIER_BADGE = {
     RiskTier.LOW: ("#1a7f37", "LOW"),
@@ -204,6 +205,10 @@ def send(html_body: str, subject: str, config: dict, *, suppress: bool = False) 
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
+            # Resend sits behind Cloudflare, which rejects urllib's default
+            # "Python-urllib/3.x" signature with a 403 and edge error 1010 —
+            # before the API key is ever looked at. A real User-Agent avoids it.
+            "User-Agent": USER_AGENT,
         },
         method="POST",
     )
