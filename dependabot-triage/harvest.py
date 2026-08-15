@@ -195,9 +195,7 @@ def harvest_repo(
         )
 
     log.info("%s: %d Dependabot PR(s), %d required check(s)", repo, len(prs), len(contexts))
-    return RepoHarvest(
-        repo=repo, base=base, merge_method=merge_method, baseline=baseline, prs=prs
-    )
+    return RepoHarvest(repo=repo, base=base, merge_method=merge_method, baseline=baseline, prs=prs)
 
 
 def harvest_all(config: dict, *, fetch_diffs: bool = True) -> list[RepoHarvest]:

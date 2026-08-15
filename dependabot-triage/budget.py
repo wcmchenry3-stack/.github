@@ -118,9 +118,7 @@ class Budget:
         spend = price(model, usage)
         self.total = self.total + spend
         self.by_phase[phase] = self.by_phase.get(phase, Spend()) + spend
-        log.debug(
-            "%s on %s cost $%.5f (run total $%.4f)", phase, model, spend.usd, self.run_usd
-        )
+        log.debug("%s on %s cost $%.5f (run total $%.4f)", phase, model, spend.usd, self.run_usd)
         return spend
 
     def summary(self) -> dict:

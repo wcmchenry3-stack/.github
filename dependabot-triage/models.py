@@ -7,10 +7,10 @@ calls a model; that keeps the objects trivially constructible in tests.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 
 
-class RiskTier(str, Enum):
+class RiskTier(StrEnum):
     """Assessment outcome. Only LOW is ever eligible for an automated merge."""
 
     LOW = "LOW"
@@ -19,7 +19,7 @@ class RiskTier(str, Enum):
     BLOCKED = "BLOCKED"
 
 
-class Action(str, Enum):
+class Action(StrEnum):
     """The complete action vocabulary available to the executor.
 
     The assessment model emits one of these and nothing else. Anything outside

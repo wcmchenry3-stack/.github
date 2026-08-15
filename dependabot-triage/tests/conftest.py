@@ -32,14 +32,14 @@ def green_checks(required: frozenset[str] = REQUIRED) -> list[CheckRun]:
 
 def make_pr(**overrides) -> PullRequest:
     """A clean, mergeable npm patch bump that passes every guard."""
-    defaults = dict(
-        repo="buffingchi_site",
-        number=101,
-        title="chore(deps): bump lodash from 4.17.20 to 4.17.21",
-        author="app/dependabot",
-        base_ref="dev",
-        head_sha="a" * 40,
-        files=[
+    defaults = {
+        "repo": "buffingchi_site",
+        "number": 101,
+        "title": "chore(deps): bump lodash from 4.17.20 to 4.17.21",
+        "author": "app/dependabot",
+        "base_ref": "dev",
+        "head_sha": "a" * 40,
+        "files": [
             ChangedFile(
                 path="package.json",
                 additions=1,
@@ -48,24 +48,24 @@ def make_pr(**overrides) -> PullRequest:
             ),
             ChangedFile(path="package-lock.json", additions=8, deletions=8, patch=""),
         ],
-        labels=["dependencies", "javascript"],
-        checks=green_checks(),
-        mergeable="MERGEABLE",
-        merge_state_status="CLEAN",
-        ecosystem="npm",
-    )
+        "labels": ["dependencies", "javascript"],
+        "checks": green_checks(),
+        "mergeable": "MERGEABLE",
+        "merge_state_status": "CLEAN",
+        "ecosystem": "npm",
+    }
     defaults.update(overrides)
     return PullRequest(**defaults)
 
 
 def make_baseline(**overrides) -> RepoBaseline:
-    defaults = dict(
-        repo="buffingchi_site",
-        required_contexts=REQUIRED,
-        workflow_file_shas={".github/workflows/ci.yml": "deadbeef"},
-        dependabot_config_sha="cafebabe",
-        thresholds={"cov_fail_under": 80.0},
-    )
+    defaults = {
+        "repo": "buffingchi_site",
+        "required_contexts": REQUIRED,
+        "workflow_file_shas": {".github/workflows/ci.yml": "deadbeef"},
+        "dependabot_config_sha": "cafebabe",
+        "thresholds": {"cov_fail_under": 80.0},
+    }
     defaults.update(overrides)
     return RepoBaseline(**defaults)
 

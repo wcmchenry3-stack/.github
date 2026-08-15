@@ -194,9 +194,7 @@ def guard_no_denylisted_paths(pr: PullRequest) -> GuardResult:
     """G03 — no CI-defining file is touched, whatever the allowlist says."""
     hits = [p for p in pr.paths if _matches_any(p, PATH_DENYLIST)]
     if hits:
-        return GuardResult(
-            "G03", False, f"touches CI-defining files: {', '.join(sorted(hits))}"
-        )
+        return GuardResult("G03", False, f"touches CI-defining files: {', '.join(sorted(hits))}")
     return GuardResult("G03", True, "no CI-defining files touched")
 
 
@@ -268,9 +266,7 @@ def guard_required_checks_green(pr: PullRequest, baseline: RepoBaseline) -> Guar
     if failing:
         names = ", ".join(f"{c.name}={c.conclusion or c.status}" for c in failing)
         return GuardResult("G06", False, f"required checks not green: {names}")
-    return GuardResult(
-        "G06", True, f"all {len(baseline.required_contexts)} required checks green"
-    )
+    return GuardResult("G06", True, f"all {len(baseline.required_contexts)} required checks green")
 
 
 def guard_protection_unchanged(
@@ -295,15 +291,15 @@ def guard_head_sha_unchanged(pr: PullRequest, assessed_sha: str) -> GuardResult:
     return GuardResult(
         "G08",
         ok,
-        "head SHA matches assessment"
-        if ok
-        else f"head moved {assessed_sha[:7]} -> {pr.head_sha[:7]} since assessment",
+        (
+            "head SHA matches assessment"
+            if ok
+            else f"head moved {assessed_sha[:7]} -> {pr.head_sha[:7]} since assessment"
+        ),
     )
 
 
-def guard_thresholds_not_lowered(
-    baseline: RepoBaseline, current: dict[str, float]
-) -> GuardResult:
+def guard_thresholds_not_lowered(baseline: RepoBaseline, current: dict[str, float]) -> GuardResult:
     """G09 — numeric quality gates may rise or hold, never fall."""
     lowered = [
         f"{k}: {baseline.thresholds[k]} -> {v}"

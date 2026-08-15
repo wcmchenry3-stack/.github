@@ -35,7 +35,8 @@ def _describe_pr(pr: PullRequest, required: frozenset[str], base: str) -> str:
         f"### {pr.repo}#{pr.number}",
         f"title: {pr.title}",
         f"ecosystem: {pr.ecosystem}",
-        f"base branch: {base}" + ("  (merges here reach a Render deploy)" if base == "main" else ""),
+        f"base branch: {base}"
+        + ("  (merges here reach a Render deploy)" if base == "main" else ""),
         f"grouped: {'yes' if pr.is_group else 'no'}",
         f"labels: {', '.join(pr.labels) or 'none'}",
     ]
@@ -44,7 +45,9 @@ def _describe_pr(pr: PullRequest, required: frozenset[str], base: str) -> str:
     lines.append(f"changed files: {', '.join(pr.paths) or 'none'}")
 
     if required:
-        lines.append(f"required checks in this repo ({len(required)}): {', '.join(sorted(required))}")
+        lines.append(
+            f"required checks in this repo ({len(required)}): {', '.join(sorted(required))}"
+        )
     else:
         lines.append(
             "required checks in this repo: NONE — this repo's branch protection "
@@ -73,9 +76,7 @@ def build_corpus(harvests: list[RepoHarvest]) -> str:
             continue
         blocks.append(f"## Repository: {harvest.repo} (base: {harvest.base})")
         for pr in prs:
-            blocks.append(
-                _describe_pr(pr, harvest.baseline.required_contexts, harvest.base)
-            )
+            blocks.append(_describe_pr(pr, harvest.baseline.required_contexts, harvest.base))
     return "\n\n".join(blocks)
 
 
@@ -92,9 +93,7 @@ def _to_assessment(raw: dict) -> Assessment:
     )
 
 
-def assess(
-    harvests: list[RepoHarvest], client: Client, config: dict
-) -> dict[str, Assessment]:
+def assess(harvests: list[RepoHarvest], client: Client, config: dict) -> dict[str, Assessment]:
     """Classify every open Dependabot PR. Returns ``{"repo#number": Assessment}``.
 
     Any PR the model fails to return an assessment for is defaulted to MEDIUM —

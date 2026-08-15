@@ -11,8 +11,7 @@ import pytest
 from conftest import REQUIRED, green_checks, make_baseline, make_pr, workflow_pr
 
 import guards
-from models import ChangedFile, CheckRun, RepoBaseline
-
+from models import ChangedFile, CheckRun
 
 # ---------------------------------------------------------------------------
 # Happy path
@@ -93,9 +92,7 @@ def test_rejects_source_and_infra_files(path):
 
 
 def test_a_single_stray_file_fails_an_otherwise_clean_pr(baseline):
-    pr = make_pr(
-        files=[ChangedFile(path="package.json"), ChangedFile(path="src/api/client.ts")]
-    )
+    pr = make_pr(files=[ChangedFile(path="package.json"), ChangedFile(path="src/api/client.ts")])
     results = guards.run_all_guards(pr, baseline, assessed_sha=pr.head_sha)
     assert not guards.may_merge(results)
 
@@ -135,7 +132,9 @@ def test_pr_that_also_edits_pytest_ini_is_refused(baseline):
     pr = make_pr(
         files=[
             ChangedFile(path="requirements.txt", patch="@@\n-pytest==8.0.0\n+pytest==8.1.0\n"),
-            ChangedFile(path="pytest.ini", patch="@@\n-addopts = --cov-fail-under=80\n+addopts =\n"),
+            ChangedFile(
+                path="pytest.ini", patch="@@\n-addopts = --cov-fail-under=80\n+addopts =\n"
+            ),
         ]
     )
     results = guards.run_all_guards(pr, baseline, assessed_sha=pr.head_sha)
@@ -248,7 +247,9 @@ def test_forbidden_tokens_inside_generated_lockfiles_are_ignored():
 def test_removed_lines_do_not_trigger_the_scan():
     """Deleting a `continue-on-error` is a strengthening, not a weakening."""
     pr = make_pr(
-        files=[ChangedFile(path=".github/workflows/ci.yml", patch="@@\n-  continue-on-error: true\n")]
+        files=[
+            ChangedFile(path=".github/workflows/ci.yml", patch="@@\n-  continue-on-error: true\n")
+        ]
     )
     assert guards.guard_no_forbidden_patterns(pr).passed
 
@@ -311,7 +312,7 @@ def test_extra_non_required_failures_do_not_block(baseline):
 def test_skipped_and_neutral_count_as_success(baseline):
     checks = [
         CheckRun(name=n, conclusion=c)
-        for n, c in zip(sorted(REQUIRED), ["SUCCESS", "SKIPPED", "NEUTRAL"])
+        for n, c in zip(sorted(REQUIRED), ["SUCCESS", "SKIPPED", "NEUTRAL"], strict=True)
     ]
     assert guards.guard_required_checks_green(make_pr(checks=checks), baseline).passed
 
@@ -419,18 +420,14 @@ def test_extraction_returns_empty_when_nothing_is_configured():
 
 
 def test_workflow_pin_changes_summarises_bumped_actions():
-    patch = (
-        "@@\n-        uses: actions/setup-python@v6\n+        uses: actions/setup-python@v7\n"
-    )
+    patch = "@@\n-        uses: actions/setup-python@v6\n+        uses: actions/setup-python@v7\n"
     assert guards.workflow_pin_changes(workflow_pr(patch).files) == ["actions/setup-python@v7"]
 
 
 def test_workflow_pin_changes_ignores_non_workflow_files():
     files = [
         ChangedFile(path="package.json", patch="@@\n+        uses: not/a-workflow@v1\n"),
-        ChangedFile(
-            path=".github/workflows/ci.yml", patch="@@\n+        uses: actions/cache@v4\n"
-        ),
+        ChangedFile(path=".github/workflows/ci.yml", patch="@@\n+        uses: actions/cache@v4\n"),
     ]
     assert guards.workflow_pin_changes(files) == ["actions/cache@v4"]
 
