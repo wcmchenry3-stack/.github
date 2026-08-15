@@ -458,3 +458,44 @@ def test_ledger_shape_is_json_serialisable():
         ]
     }
     assert json.loads(json.dumps(payload))["decisions"][0]["action"] == "MERGE"
+
+
+# ---------------------------------------------------------------------------
+# Permission errors must never look like "nothing is configured"
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "gh api failed (1): Resource not accessible by personal access token",
+        "gh api failed (1): Must have admin rights to Repository.",
+        "gh api failed (1): HTTP 403: Forbidden",
+        "gh api failed (1): Resource not accessible by integration",
+    ],
+)
+def test_permission_errors_are_recognised(message):
+    import gh
+
+    assert gh._is_permission_error(gh.GhError(message))
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "gh api failed (1): Branch not protected",
+        "gh api failed (1): HTTP 404: Not Found",
+    ],
+)
+def test_genuine_absence_is_not_a_permission_error(message):
+    """A repo with no protection is a real, valid state — not an error."""
+    import gh
+
+    assert not gh._is_permission_error(gh.GhError(message))
+
+
+def test_unreadable_protection_is_a_distinct_exception_type():
+    """So the orchestrator can abort on it specifically, rather than guessing."""
+    import gh
+
+    assert issubclass(gh.ProtectionUnreadable, gh.GhError)
