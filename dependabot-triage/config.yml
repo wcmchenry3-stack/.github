@@ -53,6 +53,11 @@ budget:
   max_per_month: 20.00
   # Corpus larger than this is split per-repo rather than sent as one request.
   assessment_token_ceiling: 150000
+  # The real constraint is output length, not input: each PR produces a
+  # rationale plus per-question evidence, so a big batch truncates long before
+  # the input approaches the context limit. 18 PRs overran a 16k output cap.
+  max_prs_per_assessment: 8
+  assessment_max_output_tokens: 32000
 
 models:
   assess: claude-sonnet-5

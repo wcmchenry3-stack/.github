@@ -35,7 +35,11 @@ CONFIG = {
         "summary": "claude-haiku-4-5",
     },
     "effort": {"assess": "medium", "adversary": "low", "diagnose": "low", "summary": "low"},
-    "budget": {"assessment_token_ceiling": 150000},
+    "budget": {
+        "assessment_token_ceiling": 150000,
+        "max_prs_per_assessment": 8,
+        "assessment_max_output_tokens": 32000,
+    },
 }
 
 
@@ -389,3 +393,37 @@ def test_low_confidence_diagnosis_escalates_to_the_stronger_model():
     client = FakeClient(diagnosis="Not sure.\n\nCONFIDENCE: LOW")
     diagnose_mod.diagnose(make_pr(checks=checks), REQUIRED, client, CONFIG, dry_run=True)
     assert "diagnose-escalated" in client.calls
+
+
+def test_large_pr_batch_is_chunked_even_when_input_is_small():
+    """18 PRs overran a 16k output cap on the first full run.
+
+    Input size was only ~31k tokens — nowhere near the ceiling — so chunking
+    has to trigger on PR count, because the binding constraint is output.
+    """
+    prs = [make_pr(number=n) for n in range(1, 10)]  # 9 > max_prs_per_assessment
+    client = FakeClient(tokens=1000)  # small input, deliberately
+    assess_mod.assess([_harvest(prs)], client, CONFIG)
+    assert client.calls.count("assess") == 1  # one call per repo, not one for all
+
+
+def test_small_batch_stays_a_single_cross_repo_call():
+    """Chunking costs cross-PR reasoning, so it should not trigger needlessly."""
+    a = _harvest([make_pr(repo="BC-Arcade", number=1)])
+    b = _harvest([make_pr(repo="RulersAI", number=2)])
+    client = FakeClient(tokens=1000)
+    assess_mod.assess([a, b], client, CONFIG)
+    assert client.calls.count("assess") == 1
+
+
+def test_assessment_requests_the_configured_output_budget():
+    """A truncated response aborts the run, so the cap must come from config."""
+    seen = {}
+
+    class Recorder(FakeClient):
+        def complete(self, **kw):
+            seen[kw["phase"]] = kw.get("max_tokens")
+            return super().complete(**kw)
+
+    assess_mod.assess([_harvest([make_pr()])], Recorder(), CONFIG)
+    assert seen["assess"] == 32000

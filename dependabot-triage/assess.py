@@ -106,12 +106,24 @@ def assess(harvests: list[RepoHarvest], client: Client, config: dict) -> dict[st
     model = config["models"]["assess"]
     effort = config["effort"]["assess"]
     ceiling = config["budget"]["assessment_token_ceiling"]
+    max_prs = config["budget"].get("max_prs_per_assessment", 8)
+    max_out = config["budget"].get("assessment_max_output_tokens", 32000)
 
+    pr_count = sum(len(h.dependabot_prs) for h in harvests)
     token_count = client.count_tokens(model, ASSESS_PROMPT, corpus)
-    log.info("assessment corpus is %d tokens", token_count)
+    log.info("assessment corpus is %d tokens across %d PR(s)", token_count, pr_count)
 
-    if should_chunk(token_count, ceiling):
-        log.warning("corpus exceeds %d tokens; assessing per repo instead", ceiling)
+    # The binding constraint is *output*, not input: each PR yields a rationale
+    # plus per-question evidence, so a large batch truncates long before the
+    # input is anywhere near the context limit. Chunk on PR count as well.
+    if should_chunk(token_count, ceiling) or pr_count > max_prs:
+        log.info(
+            "assessing per repo (%d PRs, %d tokens; limits %d PRs, %d tokens)",
+            pr_count,
+            max_prs,
+            ceiling,
+            token_count,
+        )
         raw_items: list[dict] = []
         for harvest in harvests:
             if not harvest.dependabot_prs:
@@ -123,7 +135,7 @@ def assess(harvests: list[RepoHarvest], client: Client, config: dict) -> dict[st
                 system=ASSESS_PROMPT,
                 prompt=chunk,
                 effort=effort,
-                max_tokens=8000,
+                max_tokens=max_out,
                 cache_system=True,
                 schema=SCHEMA,
             )
@@ -135,7 +147,7 @@ def assess(harvests: list[RepoHarvest], client: Client, config: dict) -> dict[st
             system=ASSESS_PROMPT,
             prompt=corpus,
             effort=effort,
-            max_tokens=16000,
+            max_tokens=max_out,
             cache_system=True,
             schema=SCHEMA,
         )
