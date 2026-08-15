@@ -9,6 +9,14 @@ on:
       working-directory:
         type: string
         default: '.'
+      black-version:
+        description: 'Pinned black version. Unpinned "pip install black ruff" let upstream rule changes silently break lint-python on unrelated PRs — see wcmchenry3-stack/BookshelfAI#403.'
+        type: string
+        default: '26.5.1'
+      ruff-version:
+        description: 'Pinned ruff version. Unpinned "pip install black ruff" let upstream rule changes silently break lint-python on unrelated PRs — see wcmchenry3-stack/BookshelfAI#403.'
+        type: string
+        default: '0.15.20'
 
 jobs:
   lint-python:
@@ -20,7 +28,7 @@ jobs:
         with:
           python-version: ${{ inputs.python-version }}
       - name: Install linters
-        run: pip install black ruff
+        run: pip install black==${{ inputs.black-version }} ruff==${{ inputs.ruff-version }}
       - name: black
         run: black --check .
         working-directory: ${{ inputs.working-directory }}
