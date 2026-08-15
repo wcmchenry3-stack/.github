@@ -12,6 +12,17 @@ updates:
     labels:
       - "dependencies"
       - "ci"
+    groups:
+      # CVE fixes get their own PR so they are never held up behind a routine batch.
+      security-updates:
+        applies-to: security-updates
+        patterns: ["*"]
+      # Minor/patch action bumps batch into one PR; majors still open
+      # individually, since an action major can change inputs or runtime.
+      actions:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
     ignore:
       # v5+ does not exist; latest is v4
       - dependency-name: "actions/checkout"
@@ -30,3 +41,30 @@ updates:
       prefix: "chore"
     labels:
       - "dependencies"
+    groups:
+      security-updates:
+        applies-to: security-updates
+        patterns: ["*"]
+      minor-and-patch:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # Dependabot triage agent (Python)
+  - package-ecosystem: "pip"
+    directory: "/dependabot-triage"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    commit-message:
+      prefix: "chore"
+    labels:
+      - "dependencies"
+    groups:
+      security-updates:
+        applies-to: security-updates
+        patterns: ["*"]
+      minor-and-patch:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
