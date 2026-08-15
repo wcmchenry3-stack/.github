@@ -1,0 +1,40 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --cov=. --cov-report=term-missing --cov-fail-under=80"
+
+[tool.coverage.run]
+# gh.py and llm.py are pure adapters: one translates to `gh` subprocess calls,
+# the other to Anthropic SDK calls. Unit tests over them would assert the
+# behaviour of a mock rather than of the code, so they are verified by the dry
+# run against live repos instead. Everything that makes a *decision* — guards,
+# execute, assess, metrics, report — is covered here, and guards.py is held at
+# 100% separately by the workflow.
+omit = ["tests/*", "__main__.py", "gh.py", "llm.py"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "S", "C4", "SIM"]
+ignore = [
+    "S101", # assert is the point of a test suite
+    "E501", # line length is enforced by the formatter
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S105", "S106"]
+# gh._run is the single audited subprocess call site; it always passes an
+# argument list and never shell=True.
+"gh.py" = ["S603", "S607"]

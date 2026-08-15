@@ -1,0 +1,14 @@
+# Python build and test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.venv/
+venv/
+
+# Run output — the ledger is uploaded as a workflow artifact, never committed.
+# The metrics history under history/ IS committed and is not ignored here.
+out/
+*.ledger.json

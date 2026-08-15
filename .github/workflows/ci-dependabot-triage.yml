@@ -1,0 +1,76 @@
+name: CI — Dependabot Triage
+
+# The triage agent is the only executable code in this meta-repo, and its guard
+# module decides whether an unattended merge may happen. That boundary must be
+# verified at review time, not only at 06:00 when the agent runs.
+
+on:
+  pull_request:
+    paths:
+      - "dependabot-triage/**"
+      - ".github/workflows/ci-dependabot-triage.yml"
+      - ".github/workflows/scheduled-dependabot-triage.yml"
+  push:
+    branches: [main]
+    paths:
+      - "dependabot-triage/**"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Lint and test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dependabot-triage
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: dependabot-triage/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-cov ruff black
+
+      - name: Ruff
+        run: ruff check .
+
+      - name: Black
+        run: black --check .
+
+      - name: Tests (80% floor)
+        run: python -m pytest tests -q
+
+      - name: Guard boundary must stay at 100%
+        # `-o addopts=""` clears the project-wide coverage flags from
+        # pyproject.toml so this measures guards.py alone rather than the whole
+        # package against the 80% floor.
+        run: |
+          python -m pytest tests -q -o addopts="" \
+            --cov=guards --cov-report=term-missing --cov-fail-under=100
+
+      - name: Config and schema are valid
+        run: |
+          python -c "
+          import json, pathlib, yaml
+          config = yaml.safe_load(pathlib.Path('config.yml').read_text())
+          json.loads(pathlib.Path('schema/assessment.schema.json').read_text())
+          for key in ('owner', 'repos', 'caps', 'timeouts', 'budget', 'models', 'effort'):
+              assert key in config, f'config.yml is missing {key!r}'
+          for prompt in ('assess', 'adversary', 'diagnose', 'summary'):
+              path = pathlib.Path('prompts') / f'{prompt}.md'
+              assert path.read_text().strip(), f'{path} is empty'
+          print('config, schema, and prompts OK')
+          "
+
+      - name: Entry point runs
+        # Catches an import-time break in a module the unit tests do not import.
+        run: python __main__.py --help
