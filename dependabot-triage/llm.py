@@ -81,7 +81,13 @@ class Client:
             kwargs["output_config"]["format"] = {"type": "json_schema", "schema": schema}
 
         log.info("%s: calling %s (effort=%s)", phase, model, effort)
-        response = self._client.messages.create(**kwargs)
+        # Always stream. The SDK refuses a non-streaming request whose max_tokens
+        # implies it could run past ~10 minutes, because idle connections get
+        # dropped; the assessment's output budget is well over that line.
+        # get_final_message() gives the same object create() would have returned,
+        # so nothing downstream changes.
+        with self._client.messages.stream(**kwargs) as stream:
+            response = stream.get_final_message()
 
         usage = response.usage.model_dump() if hasattr(response.usage, "model_dump") else {}
         self.budget.record(phase, model, usage)
