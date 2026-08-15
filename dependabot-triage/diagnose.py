@@ -27,16 +27,30 @@ def _failed_check_names(pr: PullRequest, required: frozenset[str]) -> list[str]:
     return [c.name for c in pr.failing_required(required)]
 
 
-def _fetch_log_tail(repo: str, owner: str, number: int) -> str:
-    """Last lines of the failing job's log.
+def fetch_log_tail(repo: str, owner: str, number: int, head_ref: str = "") -> str:
+    """Last lines of the failing job's log for *this* PR.
+
+    Previously this listed the repository's most recent workflow run, which is
+    frequently a different branch entirely — so a diagnosis could confidently
+    describe someone else's failure. The run list is now filtered to the PR's
+    own head branch.
 
     Best-effort: the log endpoint is noisy and occasionally unavailable, and a
     missing log is a normal outcome rather than a reason to fail the run.
     """
-    try:
-        raw = gh._run(
-            ["run", "list", "--repo", f"{owner}/{repo}", "--limit", "1", "--json", "databaseId"]
+    args = ["run", "list", "--repo", f"{owner}/{repo}", "--limit", "1", "--json", "databaseId"]
+    if head_ref:
+        args += ["--branch", head_ref]
+    else:
+        log.warning(
+            "no head ref for %s#%s; skipping log fetch rather than "
+            "risk reading an unrelated run",
+            repo,
+            number,
         )
+        return ""
+    try:
+        raw = gh._run(args)
     except gh.GhError as exc:
         log.info("could not list runs for %s#%s: %s", repo, number, exc)
         return ""
@@ -76,7 +90,7 @@ def diagnose(
     if not failing:
         return ""
 
-    log_tail = "" if dry_run else _fetch_log_tail(pr.repo, config["owner"], pr.number)
+    log_tail = "" if dry_run else fetch_log_tail(pr.repo, config["owner"], pr.number, pr.head_ref)
 
     prompt = "\n".join(
         [

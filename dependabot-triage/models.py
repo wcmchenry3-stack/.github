@@ -101,6 +101,7 @@ class PullRequest:
     author: str
     base_ref: str
     head_sha: str
+    head_ref: str = ""
     files: list[ChangedFile] = field(default_factory=list)
     labels: list[str] = field(default_factory=list)
     checks: list[CheckRun] = field(default_factory=list)
