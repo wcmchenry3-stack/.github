@@ -427,3 +427,50 @@ def test_assessment_requests_the_configured_output_budget():
 
     assess_mod.assess([_harvest([make_pr()])], Recorder(), CONFIG)
     assert seen["assess"] == 32000
+
+
+def test_adversary_receives_the_manifest_diff_not_just_names():
+    """Two live false positives came from the adversary having no diff to cite.
+
+    It invented a `latest-minor` constraint for sharp — the real diff was
+    `^0.35.2` to `^0.35.3` — and blocked a good merge. It can only be asked for
+    concrete evidence if it is given concrete evidence.
+    """
+    from models import ChangedFile
+
+    seen = {}
+
+    class Recorder(FakeClient):
+        def complete(self, **kw):
+            seen[kw["phase"]] = kw["prompt"]
+            return super().complete(**kw)
+
+    pr = make_pr(
+        files=[
+            ChangedFile(
+                path="package.json",
+                patch='@@\n-    "sharp": "^0.35.2",\n+    "sharp": "^0.35.3",\n',
+            ),
+            ChangedFile(path="package-lock.json", patch="@@\n+ noise\n"),
+        ]
+    )
+    _run([_harvest([pr])], {pr.slug: _low(pr)}, Recorder())
+    prompt = seen["adversary"]
+    assert '"sharp": "^0.35.3"' in prompt, "manifest diff missing from adversary prompt"
+    assert "noise" not in prompt, "lockfile should not be included"
+
+
+def test_lockfile_only_pr_tells_the_adversary_so_explicitly():
+    """Silence would invite the model to guess at constraints it cannot see."""
+    from models import ChangedFile
+
+    seen = {}
+
+    class Recorder(FakeClient):
+        def complete(self, **kw):
+            seen[kw["phase"]] = kw["prompt"]
+            return super().complete(**kw)
+
+    pr = make_pr(files=[ChangedFile(path="package-lock.json", patch="@@\n+ x\n")])
+    _run([_harvest([pr])], {pr.slug: _low(pr)}, Recorder())
+    assert "lockfile-only update" in seen["adversary"]

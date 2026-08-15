@@ -87,6 +87,31 @@ def build_corpus(harvests: list[RepoHarvest], today: str | None = None) -> str:
     return "\n\n".join(blocks)
 
 
+# Lockfiles are huge and machine-generated. Version *constraints* live in the
+# manifests, which is what an objection about a version spec has to cite.
+MANIFEST_HINTS = (
+    "package.json",
+    "requirements",
+    "pyproject.toml",
+    "Pipfile",
+    "go.mod",
+    ".github/workflows/",
+)
+MANIFEST_DIFF_CHARS = 2500
+
+
+def manifest_diff(pr: PullRequest) -> str:
+    """The changed lines from manifests only, for grounding a review in evidence."""
+    chunks: list[str] = []
+    for f in pr.files:
+        if "lock" in f.path.lower() or not any(h in f.path for h in MANIFEST_HINTS):
+            continue
+        lines = [ln for ln in f.changed_lines() if ln.strip() not in ("+", "-")]
+        if lines:
+            chunks.append("\n".join([f"--- {f.path}", *lines]))
+    return "\n\n".join(chunks)[:MANIFEST_DIFF_CHARS]
+
+
 def _to_assessment(raw: dict) -> Assessment:
     return Assessment(
         repo=raw["repo"],
@@ -201,6 +226,10 @@ def adversarial_review(
             f"Changed files: {', '.join(pr.paths)}",
             f"Packages moved: {', '.join(assessment.packages) or 'unknown'}",
             f"Reviewer's rationale: {assessment.rationale}",
+            "",
+            "Manifest diff — these are the actual changed lines. Any objection about a",
+            "version constraint, range, or pin must quote from here:",
+            manifest_diff(pr) or "(no manifest changes; lockfile-only update)",
             "",
             "Release notes (truncated):",
             pr.body[:BODY_CHARS] or "(none supplied)",
