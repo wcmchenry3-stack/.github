@@ -182,6 +182,10 @@ class Decision:
     deferred: bool = False
     deciding_question: str = ""
     diagnosis: str = ""
+    # True when a required check was already failing when the run started. Such a
+    # PR was never mergeable tonight by anyone, so counting it against the agent
+    # would make the autonomy rate measure repo health rather than agent behaviour.
+    pre_existing_red: bool = False
 
     @property
     def slug(self) -> str:

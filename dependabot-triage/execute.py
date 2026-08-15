@@ -354,6 +354,18 @@ def execute(
             )
         )
 
+    # Mark PRs whose required checks were already failing when the run began.
+    # They were not mergeable tonight by anyone, so they are excluded from the
+    # autonomy-rate denominator — otherwise the metric drifts into measuring repo
+    # health rather than how much work the agent is actually taking on.
+    already_red = {
+        pr.slug: bool(pr.failing_required(h.baseline.required_contexts))
+        for h in harvests
+        for pr in h.dependabot_prs
+    }
+    for decision in result.decisions:
+        decision.pre_existing_red = already_red.get(decision.slug, False)
+
     for decision in result.decisions:
         if decision.action in (Action.COMMENT, Action.SKIP) or decision.merged:
             gh.comment(
