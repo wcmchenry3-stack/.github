@@ -118,11 +118,11 @@ def assess(harvests: list[RepoHarvest], client: Client, config: dict) -> dict[st
     # input is anywhere near the context limit. Chunk on PR count as well.
     if should_chunk(token_count, ceiling) or pr_count > max_prs:
         log.info(
-            "assessing per repo (%d PRs, %d tokens; limits %d PRs, %d tokens)",
+            "assessing per repo: %d PRs / %d tokens exceeds limit of %d PRs / %d tokens",
             pr_count,
+            token_count,
             max_prs,
             ceiling,
-            token_count,
         )
         raw_items: list[dict] = []
         for harvest in harvests:
