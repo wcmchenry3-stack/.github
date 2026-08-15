@@ -183,6 +183,7 @@ def harvest_repo(
                 author=author,
                 base_ref=raw.get("baseRefName", base),
                 head_sha=raw.get("headRefOid", ""),
+                head_ref=raw.get("headRefName", ""),
                 files=files,
                 labels=labels,
                 checks=checks,

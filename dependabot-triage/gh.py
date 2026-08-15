@@ -100,11 +100,28 @@ def list_open_prs(repo: str, owner: str) -> list[dict[str, Any]]:
             "--limit",
             "100",
             "--json",
-            "number,title,author,baseRefName,headRefOid,labels,files,"
+            "number,title,author,baseRefName,headRefName,headRefOid,labels,files,"
             "mergeable,mergeStateStatus,body,createdAt",
         ]
     )
     return json.loads(raw) if raw.strip() else []
+
+
+def pr_commit_authors(repo: str, owner: str, number: int) -> list[str]:
+    """Logins of everyone who committed to the PR branch.
+
+    Needed before asking Dependabot to recreate: recreate force-pushes the
+    branch from scratch, which would silently discard any human fix-up commits.
+    Over 90 days, 30 merged Dependabot PRs carried exactly that kind of work.
+    """
+    raw = _run(["pr", "view", str(number), "--repo", f"{owner}/{repo}", "--json", "commits"])
+    data = json.loads(raw) if raw.strip() else {}
+    out: list[str] = []
+    for commit in data.get("commits", []):
+        for author in commit.get("authors") or []:
+            if author.get("login"):
+                out.append(author["login"])
+    return out
 
 
 def pr_diff(repo: str, owner: str, number: int) -> str:

@@ -13,8 +13,10 @@ import logging
 import time
 from dataclasses import dataclass, field
 
+import diagnose as diagnose_mod
 import gh
 import guards
+import remediate
 from assess import adversarial_review
 from harvest import RepoHarvest
 from llm import Client
@@ -126,6 +128,7 @@ def execute(
 
     result = ExecutionResult()
     pending: list[Pending] = []
+    recreates = 0
     started = time.monotonic()
 
     def budget_left() -> float:
@@ -165,6 +168,41 @@ def execute(
             blocking = [g for g in failed if g.guard_id != "G10"]
 
             if blocking:
+                # A PR blocked only on red checks may be red because its lockfile
+                # disagrees with its manifest, not because the bump is bad. Ask
+                # Dependabot to rebuild rather than writing to the branch here.
+                only_checks_failed = {g.guard_id for g in blocking} == {"G06"}
+                if (
+                    only_checks_failed
+                    and config.get("remediate", {}).get("enabled", False)
+                    and recreates < config.get("remediate", {}).get("max_recreates_per_run", 4)
+                ):
+                    log_text = (
+                        ""
+                        if dry_run
+                        else diagnose_mod.fetch_log_tail(pr.repo, owner, pr.number, pr.head_ref)
+                    )
+                    authors = [] if dry_run else gh.pr_commit_authors(pr.repo, owner, pr.number)
+                    ok, why = remediate.should_recreate(
+                        pr, harvest.baseline.required_contexts, log_text, authors
+                    )
+                    if ok:
+                        log.info("%s: asking Dependabot to recreate (%s)", pr.slug, why)
+                        gh.request_rebase(pr.repo, owner, pr.number, recreate=True, dry_run=dry_run)
+                        recreates += 1
+                        pending.append(
+                            Pending(
+                                pr,
+                                harvest,
+                                assessment,
+                                pr.head_sha,
+                                time.monotonic(),
+                                recreated=True,
+                            )
+                        )
+                        continue
+                    log.info("%s: not recreating — %s", pr.slug, why)
+
                 result.decisions.append(
                     Decision(
                         repo=pr.repo,

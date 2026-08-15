@@ -101,6 +101,14 @@ effort:
 adversary:
   enabled: false
 
+# Ask Dependabot to rebuild a branch when a red PR looks like a lockfile
+# desync rather than a genuine incompatibility. Dependabot does the rebuild, so
+# the agent still never writes a file. Recreate force-pushes, so it is refused
+# outright on any branch carrying human commits.
+remediate:
+  enabled: true
+  max_recreates_per_run: 4
+
 # Per-PR kill switch.
 hold_label: "dependabot-triage:hold"
 
