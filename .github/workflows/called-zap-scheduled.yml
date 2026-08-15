@@ -29,6 +29,12 @@ jobs:
     permissions:
       issues: write
       contents: read
+    env:
+      # The `secrets` context is not available in step-level `if:` conditions,
+      # so the target is resolved once here and the steps below branch on `env`,
+      # which is available. Bracket syntax is required because the secret name
+      # contains hyphens and cannot be reached with dot notation.
+      ZAP_TARGET: ${{ secrets['target-url-secret'] || inputs.target-url }}
     steps:
       - uses: actions/checkout@v4
       - name: Guard - branch filter
@@ -45,13 +51,13 @@ jobs:
             echo "Skipping ZAP scan: branch '$CURRENT' not in [$BRANCHES]"
           fi
       - name: Run ZAP baseline scan
-        if: ${{ steps.guard.outputs.run == 'true' && (secrets.target-url-secret != '' || inputs.target-url != '') }}
+        if: ${{ steps.guard.outputs.run == 'true' && env.ZAP_TARGET != '' }}
         uses: zaproxy/action-baseline@v0.15.0
         with:
-          target: ${{ secrets.target-url-secret || inputs.target-url }}
+          target: ${{ env.ZAP_TARGET }}
           fail_action: false
       - name: Upload ZAP report
-        if: ${{ steps.guard.outputs.run == 'true' && (secrets.target-url-secret != '' || inputs.target-url != '') }}
+        if: ${{ steps.guard.outputs.run == 'true' && env.ZAP_TARGET != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: ${{ inputs.artifact-name }}-${{ github.run_id }}
