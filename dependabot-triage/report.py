@@ -173,11 +173,19 @@ color:#1f2328;max-width:760px;margin:0 auto;padding:20px">
 </body></html>"""
 
 
-def send(html_body: str, subject: str, config: dict, *, dry_run: bool = True) -> bool:
-    """Deliver via Resend. Returns True when the email was accepted."""
+def send(html_body: str, subject: str, config: dict, *, suppress: bool = False) -> bool:
+    """Deliver via Resend. Returns True when the email was accepted.
+
+    Deliberately *not* gated on dry-run. A dry run suppresses GitHub mutations —
+    comments, rebases, merges — because those change the world. The report
+    changes nothing, and it is the thing a dry run exists to let you evaluate;
+    withholding it would make the staged rollout period produce no signal at all.
+    Dry-run reports are marked in both the subject and the body, so the two can
+    never be confused.
+    """
     api_key = os.environ.get("RESEND_API_KEY", "")
-    if dry_run or not api_key:
-        reason = "dry run" if dry_run else "RESEND_API_KEY not set"
+    if suppress or not api_key:
+        reason = "--no-email" if suppress else "RESEND_API_KEY not set"
         log.info("not sending email (%s); subject was %r", reason, subject)
         return False
 
@@ -210,11 +218,18 @@ def send(html_body: str, subject: str, config: dict, *, dry_run: bool = True) ->
     return False
 
 
-def subject_line(stats: dict, config: dict, when: datetime, aborted: str = "") -> str:
+def subject_line(
+    stats: dict, config: dict, when: datetime, aborted: str = "", dry_run: bool = False
+) -> str:
     prefix = config["report"]["subject_prefix"]
+    if dry_run:
+        prefix = f"[DRY RUN] {prefix}"
     if aborted:
         return f"{prefix} — ABORTED — {when:%a %d %b}"
     return (
-        f"{prefix} — {stats['merged']} merged, "
+        f"{prefix} — {stats['merged']} would merge, "
+        f"{stats['seen'] - stats['merged']} pending — {when:%a %d %b}"
+        if dry_run
+        else f"{prefix} — {stats['merged']} merged, "
         f"{stats['seen'] - stats['merged']} pending — {when:%a %d %b}"
     )
