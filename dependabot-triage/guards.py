@@ -395,13 +395,18 @@ def extract_thresholds(text: str) -> dict[str, float]:
 
 
 def workflow_pin_changes(files: list[ChangedFile]) -> list[str]:
-    """Human-readable summary of the ``uses:`` pins a PR moves."""
-    out: list[str] = []
+    """Human-readable summary of the ``uses:`` pins a PR moves.
+
+    Deduplicated in first-seen order: an action pinned in several jobs of the same
+    workflow produces one diff line each, and listing the same bump four times in
+    a PR comment reads as a bug rather than as thoroughness.
+    """
+    seen: dict[str, None] = {}
     for f in files:
         if not _is_workflow(f.path):
             continue
         for line in f.added_lines():
             match = re.search(r"uses:\s*(\S+)@(\S+)", line)
             if match:
-                out.append(f"{match.group(1)}@{match.group(2)}")
-    return out
+                seen.setdefault(f"{match.group(1)}@{match.group(2)}")
+    return list(seen)

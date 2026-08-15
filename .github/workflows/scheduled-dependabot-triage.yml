@@ -60,10 +60,16 @@ jobs:
         # The guards decide whether a merge may happen. If their tests do not
         # pass, the run must not proceed — a broken boundary is worse than no
         # automation at all.
+        #
+        # `-o addopts=""` clears the project-wide coverage flags from
+        # pyproject.toml so this gate measures guards.py alone at 100%, rather
+        # than the whole package against the 80% floor.
         run: |
           pip install pytest pytest-cov
           cd dependabot-triage
-          python -m pytest tests -q --cov=guards --cov-fail-under=100
+          python -m pytest tests -q                       # full suite, 80% floor
+          python -m pytest tests -q -o addopts="" \
+            --cov=guards --cov-report=term --cov-fail-under=100
 
       - name: Run triage
         env:

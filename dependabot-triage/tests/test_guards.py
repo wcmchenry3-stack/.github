@@ -424,6 +424,19 @@ def test_workflow_pin_changes_summarises_bumped_actions():
     assert guards.workflow_pin_changes(workflow_pr(patch).files) == ["actions/setup-python@v7"]
 
 
+def test_workflow_pin_changes_deduplicates_an_action_pinned_in_several_jobs():
+    """RulersAI#663 bumps setup-python in two jobs; the comment should say it once."""
+    patch = (
+        "@@ -20,7 +20,7 @@\n"
+        "-        uses: actions/setup-python@v6\n"
+        "+        uses: actions/setup-python@v7\n"
+        "@@ -55,7 +55,7 @@\n"
+        "-        uses: actions/setup-python@v6\n"
+        "+        uses: actions/setup-python@v7\n"
+    )
+    assert guards.workflow_pin_changes(workflow_pr(patch).files) == ["actions/setup-python@v7"]
+
+
 def test_workflow_pin_changes_ignores_non_workflow_files():
     files = [
         ChangedFile(path="package.json", patch="@@\n+        uses: not/a-workflow@v1\n"),
