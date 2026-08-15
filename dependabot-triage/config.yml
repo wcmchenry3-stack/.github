@@ -67,12 +67,17 @@ models:
   summary: claude-haiku-4-5
   escalate: claude-opus-5 # workflow_dispatch only, never the nightly path
 
+# `output_config.effort` is not accepted by every model — Haiku 4.5 rejects it
+# with a 400. Roles running on Haiku therefore leave it empty, which the client
+# translates into omitting the parameter entirely. If you move a role onto an
+# effort-capable model, set a level here; tests/test_config_contract.py enforces
+# that the two stay consistent.
 effort:
-  assess: medium
-  adversary: low
-  diagnose: low
-  delta: low
-  summary: low
+  assess: medium # claude-sonnet-5 — supported
+  adversary: "" # claude-haiku-4-5 — not supported
+  diagnose: "" # claude-haiku-4-5 — not supported
+  delta: "" # claude-haiku-4-5 — not supported
+  summary: "" # claude-haiku-4-5 — not supported
 
 # Per-PR kill switch.
 hold_label: "dependabot-triage:hold"

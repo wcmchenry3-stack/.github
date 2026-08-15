@@ -24,6 +24,29 @@ log = logging.getLogger(__name__)
 # run instead of spinning against the wall clock.
 MAX_RETRIES = 3
 
+# `output_config.effort` is not universal: Haiku 4.5 and Sonnet 4.5 reject it
+# with a 400. This is an allowlist rather than a denylist so an unrecognised
+# model silently omits the parameter instead of failing the run — the cost of
+# omitting it is slightly different pacing, the cost of sending it is a crash.
+EFFORT_CAPABLE_MODELS = frozenset(
+    {
+        "claude-opus-5",
+        "claude-opus-4-8",
+        "claude-opus-4-7",
+        "claude-opus-4-6",
+        "claude-opus-4-5",
+        "claude-sonnet-5",
+        "claude-sonnet-4-6",
+        "claude-fable-5",
+        "claude-mythos-5",
+    }
+)
+
+
+def supports_effort(model: str) -> bool:
+    """Whether ``model`` accepts ``output_config.effort``."""
+    return model in EFFORT_CAPABLE_MODELS
+
 
 class ModelResponseInvalid(RuntimeError):
     """The model returned something the schema does not allow."""
@@ -70,15 +93,22 @@ class Client:
         if cache_system:
             system_blocks[0]["cache_control"] = {"type": "ephemeral"}
 
+        output_config: dict[str, Any] = {}
+        if supports_effort(model):
+            output_config["effort"] = effort
+        elif effort:
+            log.debug("%s: %s does not accept effort; omitting it", phase, model)
+        if schema is not None:
+            output_config["format"] = {"type": "json_schema", "schema": schema}
+
         kwargs: dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,
             "system": system_blocks,
             "messages": [{"role": "user", "content": prompt}],
-            "output_config": {"effort": effort},
         }
-        if schema is not None:
-            kwargs["output_config"]["format"] = {"type": "json_schema", "schema": schema}
+        if output_config:
+            kwargs["output_config"] = output_config
 
         log.info("%s: calling %s (effort=%s)", phase, model, effort)
         # Always stream. The SDK refuses a non-streaming request whose max_tokens
