@@ -179,7 +179,9 @@ def execute(
                 )
                 continue
 
-            still_low, objection = adversarial_review(pr, assessment, client, config)
+            still_low, objection = (True, "")
+            if config.get("adversary", {}).get("enabled", False):
+                still_low, objection = adversarial_review(pr, assessment, client, config)
             if not still_low:
                 result.decisions.append(
                     Decision(
