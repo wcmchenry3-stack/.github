@@ -445,9 +445,41 @@ def test_summary_reports_the_abort_reason_without_calling_a_model():
     assert "Nothing further was merged" in text
 
 
-def test_send_is_a_noop_during_a_dry_run():
+def test_send_is_suppressed_only_by_the_explicit_flag():
     config = {"report": {"from_address": "a@b.c", "to_address": "d@e.f"}}
-    assert report_mod.send("<p>x</p>", "subject", config, dry_run=True) is False
+    assert report_mod.send("<p>x</p>", "subject", config, suppress=True) is False
+
+
+def test_a_dry_run_still_emails(monkeypatch):
+    """A dry run suppresses GitHub mutations, never the report.
+
+    The report changes nothing and is the whole point of running dry; the
+    two-week rollout period would produce no signal at all if it were withheld.
+    """
+    sent = {}
+    monkeypatch.setenv("RESEND_API_KEY", "re_test")
+    monkeypatch.setattr(
+        report_mod.urllib.request,
+        "urlopen",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("network")),
+    )
+    config = {"report": {"from_address": "a@b.c", "to_address": "d@e.f"}}
+    # suppress defaults to False, so it attempts delivery rather than skipping.
+    try:
+        report_mod.send("<p>x</p>", "subject", config)
+    except AssertionError as exc:
+        sent["attempted"] = str(exc) == "network"
+    assert sent.get("attempted"), "send() should attempt delivery when not explicitly suppressed"
+
+
+def test_dry_run_subject_is_unmistakable():
+    config = {"report": {"subject_prefix": "Dependabot Triage"}}
+    stats = {"merged": 3, "seen": 5}
+    live = report_mod.subject_line(stats, config, NOW)
+    dry = report_mod.subject_line(stats, config, NOW, dry_run=True)
+    assert dry.startswith("[DRY RUN]")
+    assert "would merge" in dry
+    assert "[DRY RUN]" not in live and "3 merged" in live
 
 
 def test_ledger_shape_is_json_serialisable():

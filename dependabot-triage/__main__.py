@@ -82,6 +82,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--run-id", default=os.environ.get("GITHUB_RUN_ID", "local"))
     parser.add_argument("--ledger", type=Path, default=HERE / "out" / "ledger.json")
     parser.add_argument("--verbose", action="store_true")
+    parser.add_argument(
+        "--no-email",
+        action="store_true",
+        help="skip the report email (local testing); dry runs still email by default",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -129,9 +134,9 @@ def main(argv: list[str] | None = None) -> int:
         )
         report_mod.send(
             body,
-            report_mod.subject_line(stats, config, now, aborted=str(exc)),
+            report_mod.subject_line(stats, config, now, aborted=str(exc), dry_run=args.dry_run),
             config,
-            dry_run=args.dry_run,
+            suppress=args.no_email,
         )
         return 1
 
@@ -175,7 +180,10 @@ def main(argv: list[str] | None = None) -> int:
             dry_run=args.dry_run,
         )
         report_mod.send(
-            body, report_mod.subject_line(stats, config, now), config, dry_run=args.dry_run
+            body,
+            report_mod.subject_line(stats, config, now, dry_run=args.dry_run),
+            config,
+            suppress=args.no_email,
         )
         return 0
 
@@ -298,9 +306,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     report_mod.send(
         body,
-        report_mod.subject_line(stats, config, now, aborted=aborted),
+        report_mod.subject_line(stats, config, now, aborted=aborted, dry_run=args.dry_run),
         config,
-        dry_run=args.dry_run,
+        suppress=args.no_email,
     )
 
     log.info(
