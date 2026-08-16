@@ -18,7 +18,7 @@ import execute as execute_mod
 import harvest as harvest_mod
 import metrics as metrics_mod
 import report as report_mod
-from models import Action, Assessment, Decision, GuardResult, RiskTier
+from models import Action, Assessment, Decision, GuardResult, Repeat, RiskTier
 
 NOW = datetime(2026, 8, 15, 6, 0, tzinfo=UTC)
 
@@ -419,6 +419,45 @@ def test_empty_run_renders_without_error():
     assert "No open Dependabot pull requests" in _render([])
 
 
+def _repeat(**kw) -> Repeat:
+    defaults = {
+        "repo": "RulersAI",
+        "number": 663,
+        "title": "chore: bump actions/setup-python from 6 to 7",
+        "tier": RiskTier.MEDIUM,
+        "action": Action.COMMENT,
+        "reason": "Major version bump of a CI-only action; needs a human look.",
+        "deciding_question": "Q1_semver",
+        "head_sha": "a" * 40,
+        "last_seen_at": "2026-08-15",
+        "last_run_id": "31932336517",
+    }
+    defaults.update(kw)
+    return Repeat(**defaults)
+
+
+def test_repeats_render_as_a_distinct_already_triaged_block():
+    body = _render([], repeats=[_repeat()])
+    assert "Already triaged" in body
+    assert "RulersAI" in body
+    assert "since 2026-08-15" in body
+    assert "unchanged" in body
+
+
+def test_repeats_do_not_replace_the_no_open_prs_empty_state_when_both_are_empty():
+    assert "No open Dependabot pull requests" in _render([], repeats=[])
+
+
+def test_repeats_are_excluded_from_the_nights_stats():
+    """The whole point: an unchanged PR must not count toward tonight's tally."""
+    stats = metrics_mod.summarise([])  # only what execute() actually did tonight
+    assert stats["seen"] == 0
+    assert stats["autonomy_rate"] is None
+    # Rendering repeats alongside empty decisions must not touch that stats dict.
+    body = _render([], repeats=[_repeat(), _repeat(number=420, repo="BookshelfAI")])
+    assert "2 unchanged" in body
+
+
 def test_subject_line_summarises_the_night():
     stats = metrics_mod.summarise(
         [_decision(), _decision(number=2, merged=False, action=Action.COMMENT)]
@@ -426,6 +465,14 @@ def test_subject_line_summarises_the_night():
     config = {"report": {"subject_prefix": "Dependabot Triage"}}
     assert report_mod.subject_line(stats, config, NOW) == (
         "Dependabot Triage — 1 merged, 1 pending — Sat 15 Aug"
+    )
+
+
+def test_subject_line_notes_repeats_without_changing_the_pending_count():
+    stats = metrics_mod.summarise([_decision()])
+    config = {"report": {"subject_prefix": "Dependabot Triage"}}
+    assert report_mod.subject_line(stats, config, NOW, repeats=2) == (
+        "Dependabot Triage — 1 merged, 0 pending, 2 unchanged — Sat 15 Aug"
     )
 
 

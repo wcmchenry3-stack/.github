@@ -73,6 +73,7 @@ def record_run(
                     "deciding_question": decision.deciding_question,
                     "failed_guard": decision.failed_guard,
                     "reason": decision.reason,
+                    "head_sha": decision.head_sha,
                     "guards": _guard_summary(decision),
                 },
                 sort_keys=True,
@@ -155,6 +156,25 @@ def load_history(since: datetime | None = None) -> list[dict]:
                     continue
             entries.append(entry)
     return entries
+
+
+def last_decisions() -> dict[str, dict]:
+    """Most recent decision entry recorded for each PR, across all history.
+
+    History files are append-only and read in chronological order (by month
+    file name, then by line), so simply overwriting per slug as entries are
+    walked leaves the latest one behind — same assumption ``rolling`` and
+    ``precision`` already rely on.
+
+    Used by dedupe.py to recognise a PR that already received a verdict on
+    its current head SHA, so a run can skip re-triaging it.
+    """
+    out: dict[str, dict] = {}
+    for entry in load_history():
+        if entry.get("type") != "decision":
+            continue
+        out[f"{entry.get('repo')}#{entry.get('number')}"] = entry
+    return out
 
 
 def rolling(days: int = 30, now: datetime | None = None) -> dict:

@@ -157,6 +157,7 @@ def execute(
                         action=Action.COMMENT,
                         reason=assessment.rationale,
                         deciding_question=assessment.deciding_question,
+                        head_sha=pr.head_sha,
                     )
                 )
                 continue
@@ -213,6 +214,7 @@ def execute(
                         reason="Automated merge refused by a precondition check.",
                         guard_results=checks,
                         deciding_question=assessment.deciding_question,
+                        head_sha=pr.head_sha,
                     )
                 )
                 continue
@@ -230,6 +232,7 @@ def execute(
                         action=Action.COMMENT,
                         reason=f"Downgraded on adversarial review: {objection}",
                         deciding_question=assessment.deciding_question,
+                        head_sha=pr.head_sha,
                     )
                 )
                 continue
@@ -261,6 +264,7 @@ def execute(
                         action=Action.SKIP,
                         reason=f"Per-repo merge cap of {caps['max_merges_per_repo']} reached.",
                         deferred=True,
+                        head_sha=item.pr.head_sha,
                     )
                 )
                 continue
@@ -289,6 +293,7 @@ def execute(
                             reason="Dependabot did not land a rebase in time; deferred to the next run.",
                             deferred=True,
                             rebased=True,
+                            head_sha=fresh.head_sha,
                         )
                     )
                     progressed = True
@@ -307,6 +312,7 @@ def execute(
                             action=Action.COMMENT,
                             reason="CI had not finished within the wait budget; deferred to the next run.",
                             deferred=True,
+                            head_sha=fresh.head_sha,
                         )
                     )
                     progressed = True
@@ -328,6 +334,7 @@ def execute(
                             "original low-risk assessment no longer applies. Left for review."
                         ),
                         rebased=True,
+                        head_sha=fresh.head_sha,
                     )
                 )
                 continue
@@ -356,6 +363,7 @@ def execute(
                         reason="Preconditions no longer held at merge time.",
                         guard_results=checks,
                         rebased=bool(item.original_sha),
+                        head_sha=fresh.head_sha,
                     )
                 )
                 continue
@@ -373,6 +381,7 @@ def execute(
                     guard_results=checks,
                     rebased=bool(item.original_sha),
                     merged=True,
+                    head_sha=fresh.head_sha,
                 )
             )
 
@@ -391,6 +400,7 @@ def execute(
                 action=Action.COMMENT,
                 reason="Run reached its wall-clock budget; deferred to the next run.",
                 deferred=True,
+                head_sha=item.pr.head_sha,
             )
         )
 

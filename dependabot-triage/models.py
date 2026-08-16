@@ -187,6 +187,10 @@ class Decision:
     # PR was never mergeable tonight by anyone, so counting it against the agent
     # would make the autonomy rate measure repo health rather than agent behaviour.
     pre_existing_red: bool = False
+    # The commit this decision was made on. Recorded to history so a future run
+    # can recognise "this exact PR, unchanged" and skip re-triaging it — see
+    # dedupe.py.
+    head_sha: str = ""
 
     @property
     def slug(self) -> str:
@@ -198,3 +202,29 @@ class Decision:
             if not g.passed:
                 return g.guard_id
         return ""
+
+
+@dataclass(frozen=True)
+class Repeat:
+    """An open PR carried over from a previous run because nothing changed.
+
+    Built by dedupe.py from the most recent matching history entry when a PR's
+    head SHA is unchanged since it last received a final, non-deferred COMMENT
+    verdict. Never re-assessed, never re-commented — just surfaced in the
+    report so the previous verdict stays visible without being repeated.
+    """
+
+    repo: str
+    number: int
+    title: str
+    tier: RiskTier
+    action: Action
+    reason: str
+    deciding_question: str
+    head_sha: str
+    last_seen_at: str
+    last_run_id: str
+
+    @property
+    def slug(self) -> str:
+        return f"{self.repo}#{self.number}"
