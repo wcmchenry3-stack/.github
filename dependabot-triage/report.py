@@ -17,7 +17,7 @@ from datetime import datetime
 from pathlib import Path
 
 from llm import Client
-from models import Action, Decision, RiskTier
+from models import Action, Decision, Repeat, RiskTier
 
 log = logging.getLogger(__name__)
 
@@ -90,6 +90,26 @@ def _decision_row(decision: Decision, run_url: str) -> str:
     )
 
 
+def _repeat_row(r: Repeat) -> str:
+    # One flat table spans every repo (unlike the per-repo decision sections
+    # above it), so each row names its own repo rather than relying on a
+    # shared heading.
+    tier_colour, tier_label = TIER_BADGE[r.tier]
+    ref = f"{_esc(r.repo)}#{r.number}"
+    reason = _esc(r.reason)
+    if r.deciding_question and r.deciding_question != "NONE":
+        reason += f' <span style="color:#57606a">({_esc(r.deciding_question)})</span>'
+    return (
+        "<tr>"
+        f'<td style="padding:6px 10px;white-space:nowrap"><code>{ref}</code></td>'
+        f'<td style="padding:6px 10px">{_esc(r.title)}</td>'
+        f'<td style="padding:6px 10px;white-space:nowrap;color:{tier_colour};font-weight:600">{tier_label}</td>'
+        f'<td style="padding:6px 10px;color:#57606a">{reason}</td>'
+        f'<td style="padding:6px 10px;white-space:nowrap;color:#57606a">since {_esc(r.last_seen_at)}</td>'
+        "</tr>"
+    )
+
+
 def render_html(
     *,
     summary: str,
@@ -102,8 +122,10 @@ def render_html(
     when: datetime,
     dry_run: bool,
     aborted: str = "",
+    repeats: list[Repeat] | None = None,
 ) -> str:
     """Build the email body. Pure function over the ledger — no I/O, no model."""
+    repeats = repeats or []
     by_repo: dict[str, list[Decision]] = {}
     for decision in decisions:
         by_repo.setdefault(decision.repo, []).append(decision)
@@ -127,6 +149,8 @@ def render_html(
         f'{stats["seen"] - stats["merged"] - stats["blocked_by_guard"]} left for review · '
         f'<span style="color:#cf222e">{stats["blocked_by_guard"]} refused</span>'
     )
+    if repeats:
+        head += f' · <span style="color:#57606a">{len(repeats)} unchanged</span>'
 
     sections: list[str] = []
     for repo in sorted(by_repo):
@@ -140,8 +164,18 @@ def render_html(
             '<table style="border-collapse:collapse;width:100%;font-size:13px">'
             f"{rows}</table>"
         )
-    if not sections:
+    if not sections and not repeats:
         sections.append('<p style="color:#57606a">No open Dependabot pull requests.</p>')
+
+    if repeats:
+        repeat_rows = "".join(_repeat_row(r) for r in repeats)
+        sections.append(
+            '<h3 style="margin:22px 0 6px;font-size:15px;color:#57606a">Already triaged '
+            f'<span style="font-weight:400">— {len(repeats)} PR(s) unchanged since a previous '
+            'run, not re-reviewed tonight</span></h3>'
+            '<table style="border-collapse:collapse;width:100%;font-size:13px">'
+            f"{repeat_rows}</table>"
+        )
 
     return f"""<!doctype html>
 <html><body style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;
@@ -224,17 +258,20 @@ def send(html_body: str, subject: str, config: dict, *, suppress: bool = False) 
 
 
 def subject_line(
-    stats: dict, config: dict, when: datetime, aborted: str = "", dry_run: bool = False
+    stats: dict,
+    config: dict,
+    when: datetime,
+    aborted: str = "",
+    dry_run: bool = False,
+    repeats: int = 0,
 ) -> str:
     prefix = config["report"]["subject_prefix"]
     if dry_run:
         prefix = f"[DRY RUN] {prefix}"
     if aborted:
         return f"{prefix} — ABORTED — {when:%a %d %b}"
-    return (
-        f"{prefix} — {stats['merged']} would merge, "
-        f"{stats['seen'] - stats['merged']} pending — {when:%a %d %b}"
-        if dry_run
-        else f"{prefix} — {stats['merged']} merged, "
-        f"{stats['seen'] - stats['merged']} pending — {when:%a %d %b}"
-    )
+    verb = "would merge" if dry_run else "merged"
+    subject = f"{prefix} — {stats['merged']} {verb}, {stats['seen'] - stats['merged']} pending"
+    if repeats:
+        subject += f", {repeats} unchanged"
+    return f"{subject} — {when:%a %d %b}"

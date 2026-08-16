@@ -19,6 +19,7 @@ from pathlib import Path
 import yaml
 
 import assess as assess_mod
+import dedupe as dedupe_mod
 import diagnose as diagnose_mod
 import execute as execute_mod
 import gh
@@ -28,7 +29,7 @@ import metrics
 import report as report_mod
 from budget import Budget, BudgetExceeded
 from llm import Client, ModelResponseInvalid
-from models import Action
+from models import Action, Repeat
 
 HERE = Path(__file__).parent
 log = logging.getLogger("triage")
@@ -36,6 +37,23 @@ log = logging.getLogger("triage")
 
 def load_config(path: Path) -> dict:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+def _repeats_ledger(repeats: list[Repeat]) -> list[dict]:
+    return [
+        {
+            "repo": r.repo,
+            "number": r.number,
+            "title": r.title,
+            "tier": r.tier.value,
+            "action": r.action.value,
+            "reason": r.reason,
+            "deciding_question": r.deciding_question,
+            "last_seen_at": r.last_seen_at,
+            "last_run_id": r.last_run_id,
+        }
+        for r in repeats
+    ]
 
 
 def check_tripwires(harvests: list[harvest_mod.RepoHarvest], owner: str) -> list[str]:
@@ -189,16 +207,81 @@ def main(argv: list[str] | None = None) -> int:
 
     log.info("%d open Dependabot PR(s) across %d repo(s)", len(open_prs), len(harvests))
 
+    # --- Phase 1.5 ---------------------------------------------------------
+    # Drop PRs that already got a final "left for review" verdict and have not
+    # moved their head SHA since — see dedupe.py. Guard-blocked and deferred
+    # PRs are never dropped this way; only genuine, unchanged human-review
+    # holds are.
+    filtered_harvests, repeats = dedupe_mod.split(harvests, config)
+    new_open_prs = [pr for h in filtered_harvests for pr in h.dependabot_prs]
+
+    if not new_open_prs:
+        log.info(
+            "all %d open Dependabot PR(s) already triaged and unchanged; skipping model calls",
+            len(open_prs),
+        )
+        stats = metrics.summarise([])
+        args.ledger.parent.mkdir(parents=True, exist_ok=True)
+        args.ledger.write_text(
+            json.dumps(
+                {
+                    "run_id": args.run_id,
+                    "at": now.isoformat(),
+                    "dry_run": args.dry_run,
+                    "aborted": "",
+                    "stats": stats,
+                    "budget": budget.summary(),
+                    "decisions": [],
+                    "repeats": _repeats_ledger(repeats),
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        body = report_mod.render_html(
+            summary=(
+                f"No new Dependabot activity tonight — {len(repeats)} pull request(s) already "
+                "triaged in a previous run and unchanged since; see below for what was said "
+                "last time."
+            ),
+            decisions=[],
+            stats=stats,
+            rolling=metrics.rolling(now=now),
+            precision=metrics.precision(now=now),
+            budget=budget.summary(),
+            run_url=args.run_url,
+            when=now,
+            dry_run=args.dry_run,
+            repeats=repeats,
+        )
+        report_mod.send(
+            body,
+            report_mod.subject_line(
+                stats, config, now, dry_run=args.dry_run, repeats=len(repeats)
+            ),
+            config,
+            suppress=args.no_email,
+        )
+        return 0
+
+    if repeats:
+        log.info(
+            "%d new/changed PR(s), %d already triaged and unchanged",
+            len(new_open_prs),
+            len(repeats),
+        )
+
     client = Client(budget, dry_run=args.dry_run)
     result = execute_mod.ExecutionResult()
 
     try:
         # --- Phase 2 -----------------------------------------------------
-        assessments = assess_mod.assess(harvests, client, config)
+        assessments = assess_mod.assess(filtered_harvests, client, config)
 
         # --- Phase 3 -----------------------------------------------------
         result = execute_mod.execute(
-            harvests,
+            filtered_harvests,
             assessments,
             client,
             config,
@@ -207,7 +290,7 @@ def main(argv: list[str] | None = None) -> int:
         )
 
         # --- Phase 4 -----------------------------------------------------
-        by_repo = {h.repo: h for h in harvests}
+        by_repo = {h.repo: h for h in filtered_harvests}
         for decision in result.decisions:
             if decision.merged or decision.action is Action.MERGE:
                 continue
@@ -282,6 +365,7 @@ def main(argv: list[str] | None = None) -> int:
                     }
                     for d in result.decisions
                 ],
+                "repeats": _repeats_ledger(repeats),
             },
             indent=2,
             sort_keys=True,
@@ -303,10 +387,13 @@ def main(argv: list[str] | None = None) -> int:
         when=now,
         dry_run=args.dry_run,
         aborted=aborted,
+        repeats=repeats,
     )
     report_mod.send(
         body,
-        report_mod.subject_line(stats, config, now, aborted=aborted, dry_run=args.dry_run),
+        report_mod.subject_line(
+            stats, config, now, aborted=aborted, dry_run=args.dry_run, repeats=len(repeats)
+        ),
         config,
         suppress=args.no_email,
     )

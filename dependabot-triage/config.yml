@@ -109,6 +109,17 @@ remediate:
   enabled: true
   max_recreates_per_run: 4
 
+# Skip a PR that already received a "left for review" verdict in a previous
+# run and has not moved its head SHA since — no new commit means no new
+# information, so re-running the model and re-commenting would just restate
+# what was already said. A PR rejoins full triage the instant Dependabot (or
+# a human) pushes a new commit. Guard-blocked (SKIP) and deferred PRs are
+# never skipped this way — their eligibility depends on live CI/guard state
+# that can change without a new commit, and remediate's recreate-and-retry
+# loop needs to keep trying them.
+dedupe:
+  enabled: true
+
 # Per-PR kill switch.
 hold_label: "dependabot-triage:hold"
 
