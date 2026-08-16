@@ -257,9 +257,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         report_mod.send(
             body,
-            report_mod.subject_line(
-                stats, config, now, dry_run=args.dry_run, repeats=len(repeats)
-            ),
+            report_mod.subject_line(stats, config, now, dry_run=args.dry_run, repeats=len(repeats)),
             config,
             suppress=args.no_email,
         )

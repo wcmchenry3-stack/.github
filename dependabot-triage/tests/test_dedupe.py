@@ -34,14 +34,16 @@ def _record(monkeypatch, tmp_path, **decision_kwargs) -> None:
         "head_sha": "a" * 40,
     }
     defaults.update(decision_kwargs)
-    metrics_mod.record_run(
-        [Decision(**defaults)], {}, run_id="r1", now=NOW, dry_run=True
-    )
+    metrics_mod.record_run([Decision(**defaults)], {}, run_id="r1", now=NOW, dry_run=True)
 
 
 def _harvest(pr) -> RepoHarvest:
     return RepoHarvest(
-        repo="buffingchi_site", base="dev", merge_method="squash", baseline=make_baseline(), prs=[pr]
+        repo="buffingchi_site",
+        base="dev",
+        merge_method="squash",
+        baseline=make_baseline(),
+        prs=[pr],
     )
 
 

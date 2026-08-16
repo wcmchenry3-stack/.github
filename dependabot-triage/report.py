@@ -172,7 +172,7 @@ def render_html(
         sections.append(
             '<h3 style="margin:22px 0 6px;font-size:15px;color:#57606a">Already triaged '
             f'<span style="font-weight:400">— {len(repeats)} PR(s) unchanged since a previous '
-            'run, not re-reviewed tonight</span></h3>'
+            "run, not re-reviewed tonight</span></h3>"
             '<table style="border-collapse:collapse;width:100%;font-size:13px">'
             f"{repeat_rows}</table>"
         )
