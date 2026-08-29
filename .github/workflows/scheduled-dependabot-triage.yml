@@ -3,13 +3,21 @@ name: Scheduled Dependabot Triage
 # Runs at 06:00 UTC — 1am CDT, midnight CST. GitHub cron has no DST handling, so
 # the local time shifts by an hour twice a year; that is immaterial for an
 # overnight job.
+#
+# LIVE as of 2026-08-29: the nightly `schedule` trigger now runs with
+# --no-dry-run and may comment, rebase, and merge for real, across every repo
+# enabled in config.yml. This follows ~2 weeks of clean full-stack dry runs
+# (see dependabot-triage/history/) with zero crashes and no misclassified
+# merges among the decisions inspected. `workflow_dispatch` still defaults to
+# --dry-run so a manual run stays observation-only unless `dry_run` is
+# explicitly unchecked.
 on:
   schedule:
     - cron: "0 6 * * *"
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Assess and report without commenting, rebasing, or merging"
+        description: "Assess and report without commenting, rebasing, or merging (manual runs only — the nightly schedule always runs live)"
         type: boolean
         default: true
       repos:
@@ -85,7 +93,7 @@ jobs:
         run: |
           cd dependabot-triage
           python __main__.py \
-            ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run == false) && '--no-dry-run' || '--dry-run' }} \
+            ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run == true) && '--dry-run' || '--no-dry-run' }} \
             ${{ inputs.repos != '' && format('--repos {0}', inputs.repos) || '' }} \
             ${{ inputs.verbose && '--verbose' || '' }}
 
