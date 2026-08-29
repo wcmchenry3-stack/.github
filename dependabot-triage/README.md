@@ -68,8 +68,10 @@ python __main__.py --dry-run --repos RulersAI     # one repo
 python __main__.py --no-dry-run                   # live
 ```
 
-`--dry-run` is the default everywhere, including the workflow. Going live is an
-explicit `workflow_dispatch` choice.
+`--dry-run` is the default for a local run and for a manual `workflow_dispatch`.
+The nightly `schedule` trigger is the exception: as of 2026-08-29 it always runs
+`--no-dry-run`, after ~2 weeks of clean full-stack dry runs with no misclassified
+merges. Going dry again on the schedule requires editing the workflow.
 
 ## Tests
 
@@ -85,8 +87,7 @@ behaviour of a mock. They are exercised by the dry run against live repos.
 ## Configuration
 
 Everything tunable lives in [`config.yml`](config.yml). Repos are opted in
-individually and ship disabled apart from `powerplayshistory_site`, which is the
-staged-rollout starting point.
+individually; all six org repos are currently `enabled: true`.
 
 ## Secrets
 
