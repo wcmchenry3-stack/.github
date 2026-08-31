@@ -278,13 +278,19 @@ def main(argv: list[str] | None = None) -> int:
         assessments = assess_mod.assess(filtered_harvests, client, config)
 
         # --- Phase 3 -----------------------------------------------------
-        result = execute_mod.execute(
+        # `result` is passed in and mutated in place (rather than only using
+        # the return value) so that if execute() raises partway through, the
+        # except gh.GhError handler below still sees every decision made
+        # before the failure instead of the empty ExecutionResult() created
+        # above — see execute()'s docstring.
+        execute_mod.execute(
             filtered_harvests,
             assessments,
             client,
             config,
             run_url=args.run_url,
             dry_run=args.dry_run,
+            result=result,
         )
 
         # --- Phase 4 -----------------------------------------------------

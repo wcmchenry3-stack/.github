@@ -111,6 +111,61 @@ def _packages_drifted(assessment: Assessment, pr: PullRequest) -> bool:
     return not any(package in entry and to_version in entry for entry in assessment.packages)
 
 
+# GitHub computes a PR's mergeability in the background after any push and
+# reports it as still-settling until that finishes. `gh pr merge` (unlike
+# `--auto`) does not wait that out — it just fails with "not mergeable" —
+# which is indistinguishable at the surface from a real conflict. These are
+# the states that mean GitHub has actually finished and decided against
+# merging, as opposed to still computing.
+_MERGE_CONFLICT = {"CONFLICTING"}
+_MERGE_BLOCKED = {"DIRTY", "BLOCKED", "DRAFT"}
+
+
+def _merge_state_settled(mergeable: str, state: str) -> bool:
+    """True once GitHub has finished computing mergeability, one way or another."""
+    return mergeable in _MERGE_CONFLICT or state in _MERGE_BLOCKED
+
+
+def _merge_with_retry(
+    repo: str, owner: str, number: int, method: str, *, config: dict, dry_run: bool
+) -> None:
+    """``gh.merge``, retried while GitHub is still computing mergeability.
+
+    A failed merge is retried only when it fails with "not mergeable" *and*
+    ``gh pr view`` still reports an unsettled state — see
+    :func:`_merge_state_settled`. A settled conflict or block is raised
+    immediately; there is nothing to wait out there.
+    """
+    timeouts = config["timeouts"]
+    attempts = timeouts.get("merge_retry_attempts", 2)
+    wait = timeouts.get("merge_retry_wait", 15)
+
+    for attempt in range(attempts + 1):
+        try:
+            gh.merge(repo, owner, number, method, dry_run=dry_run)
+            return
+        except gh.GhError as exc:
+            if dry_run or attempt >= attempts or "not mergeable" not in str(exc).lower():
+                raise
+            try:
+                mergeable, state = gh.pr_mergeable(repo, owner, number)
+            except gh.GhError:
+                raise exc from None  # the mergeable check itself failed; report the merge error
+            if _merge_state_settled(mergeable, state):
+                raise  # GitHub has decided — a real conflict/block, not a race
+            log.info(
+                "%s/%s#%s: merge rejected while GitHub was still computing mergeability "
+                "(mergeable=%s, mergeStateStatus=%s) — retrying in %ss",
+                owner,
+                repo,
+                number,
+                mergeable,
+                state,
+                wait,
+            )
+            time.sleep(wait)
+
+
 def execute(
     harvests: list[RepoHarvest],
     assessments: dict[str, Assessment],
@@ -119,14 +174,23 @@ def execute(
     *,
     run_url: str = "",
     dry_run: bool = True,
+    result: ExecutionResult | None = None,
 ) -> ExecutionResult:
-    """Run the full decision loop across every repo."""
+    """Run the full decision loop across every repo.
+
+    ``result`` may be supplied by the caller and is mutated in place rather
+    than only being returned. That lets the caller share one object across
+    its own try/except: when an unexpected `GhError` propagates out of this
+    function, whatever was already decided is still visible to it instead of
+    being discarded along with the exception — see the call site in
+    __main__.py.
+    """
     owner = config["owner"]
     caps = config["caps"]
     timeouts = config["timeouts"]
     hold_label = config["hold_label"]
 
-    result = ExecutionResult()
+    result = result if result is not None else ExecutionResult()
     pending: list[Pending] = []
     recreates = 0
     started = time.monotonic()
@@ -368,7 +432,34 @@ def execute(
                 )
                 continue
 
-            gh.merge(fresh.repo, owner, fresh.number, item.harvest.merge_method, dry_run=dry_run)
+            try:
+                _merge_with_retry(
+                    fresh.repo,
+                    owner,
+                    fresh.number,
+                    item.harvest.merge_method,
+                    config=config,
+                    dry_run=dry_run,
+                )
+            except gh.GhError as exc:
+                # A settled conflict/block, or retries exhausted while GitHub was
+                # still deciding. Either way this is a normal, reportable outcome —
+                # not a reason to crash the run and lose every other decision.
+                result.decisions.append(
+                    Decision(
+                        repo=fresh.repo,
+                        number=fresh.number,
+                        title=fresh.title,
+                        tier=item.assessment.tier,
+                        action=Action.SKIP,
+                        reason=f"Merge attempt failed: {exc}",
+                        guard_results=checks,
+                        rebased=bool(item.original_sha),
+                        head_sha=fresh.head_sha,
+                    )
+                )
+                continue
+
             result.merges_by_repo[fresh.repo] = result.merges_by_repo.get(fresh.repo, 0) + 1
             result.decisions.append(
                 Decision(
