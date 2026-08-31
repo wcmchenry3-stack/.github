@@ -46,6 +46,14 @@ timeouts:
   checks_wait: 2700 # 45 min, sized for BC-Arcade's 20-30 min CI
   poll_interval: 60
   global_wall_clock: 14400 # 4 h; job timeout-minutes is set slightly above this
+  # `gh pr merge` fails with "not mergeable" for a few seconds to a couple of
+  # minutes after any push, while GitHub is still computing the test-merge in
+  # the background — indistinguishable at the surface from a real conflict.
+  # A merge is retried this many times, waiting this long between attempts,
+  # but only while GitHub still reports mergeability as unsettled; a settled
+  # conflict or block is never retried. See execute._merge_with_retry.
+  merge_retry_attempts: 2
+  merge_retry_wait: 15
 
 # Spend ceilings in USD, enforced in code against real `usage` blocks.
 budget:

@@ -158,6 +158,30 @@ def pr_checks(repo: str, owner: str, number: int) -> list[dict[str, Any]]:
     return json.loads(raw) if raw.strip() else []
 
 
+def pr_mergeable(repo: str, owner: str, number: int) -> tuple[str, str]:
+    """Freshly re-read ``mergeable`` / ``mergeStateStatus`` for one PR.
+
+    GitHub computes both in the background after any push and reports
+    ``UNKNOWN`` until that finishes, so this is the only way to tell a merge
+    attempt that failed because mergeability is still settling apart from one
+    that failed because it settled on a real conflict or block. Used by
+    :func:`execute._merge_with_retry`.
+    """
+    raw = _run(
+        [
+            "pr",
+            "view",
+            str(number),
+            "--repo",
+            f"{owner}/{repo}",
+            "--json",
+            "mergeable,mergeStateStatus",
+        ]
+    )
+    data = json.loads(raw) if raw.strip() else {}
+    return data.get("mergeable", "UNKNOWN"), data.get("mergeStateStatus", "UNKNOWN")
+
+
 def required_contexts(repo: str, owner: str, branch: str) -> frozenset[str]:
     """Required status checks for a branch, from classic protection or rulesets.
 

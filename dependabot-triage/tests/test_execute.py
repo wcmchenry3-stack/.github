@@ -26,6 +26,8 @@ CONFIG = {
         "checks_wait": 2700,
         "poll_interval": 0,
         "global_wall_clock": 14400,
+        "merge_retry_attempts": 2,
+        "merge_retry_wait": 0,
     },
     "hold_label": "dependabot-triage:hold",
     "adversary": {"enabled": True},
@@ -496,3 +498,144 @@ def test_absent_adversary_config_defaults_to_off():
     client = FakeClient(adversary="UNSAFE: invented")
     execute_mod.execute([_harvest([pr])], {pr.slug: _low(pr)}, client, config, dry_run=True)
     assert "adversary" not in client.calls
+
+
+# ---------------------------------------------------------------------------
+# Merge retry — incident 2026-08-31: PR #173 failed with "not mergeable"
+# because GitHub was still computing mergeability after a push, which
+# `gh pr merge` does not wait out. See _merge_with_retry.
+# ---------------------------------------------------------------------------
+
+
+class _FlakyMerge:
+    """Fails with a "not mergeable" GhError a fixed number of times, then succeeds."""
+
+    def __init__(self, fail_times: int, *, mergeable="MERGEABLE", state="CLEAN"):
+        self.fail_times = fail_times
+        self.mergeable = mergeable
+        self.state = state
+        self.calls = 0
+
+    def merge(self, repo, owner, number, method, *, dry_run=False):
+        self.calls += 1
+        if self.calls <= self.fail_times:
+            raise execute_mod.gh.GhError(
+                f"gh pr merge {number} --repo {owner}/{repo} --{method} --delete-branch "
+                f"failed (1): X Pull request {owner}/{repo}#{number} is not mergeable: "
+                "the merge commit cannot be cleanly created."
+            )
+
+    def pr_mergeable(self, repo, owner, number):
+        return self.mergeable, self.state
+
+
+def test_transient_merge_failure_is_retried_until_it_succeeds(monkeypatch):
+    flaky = _FlakyMerge(fail_times=2)  # still-computing on the first two tries
+    monkeypatch.setattr(execute_mod.gh, "merge", flaky.merge)
+    monkeypatch.setattr(execute_mod.gh, "pr_mergeable", flaky.pr_mergeable)
+    monkeypatch.setattr(execute_mod.time, "sleep", lambda _seconds: None)
+
+    config = {**CONFIG["timeouts"], "merge_retry_attempts": 3, "merge_retry_wait": 0}
+    execute_mod._merge_with_retry(
+        "wcm_portfolio_site",
+        "wcmchenry3-stack",
+        173,
+        "merge",
+        config={"timeouts": config},
+        dry_run=False,
+    )
+    assert flaky.calls == 3  # two failures, then the try that succeeds
+
+
+def test_settled_conflict_is_raised_immediately_not_retried(monkeypatch):
+    flaky = _FlakyMerge(fail_times=99, mergeable="CONFLICTING", state="DIRTY")
+    monkeypatch.setattr(execute_mod.gh, "merge", flaky.merge)
+    monkeypatch.setattr(execute_mod.gh, "pr_mergeable", flaky.pr_mergeable)
+    monkeypatch.setattr(execute_mod.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(execute_mod.gh.GhError):
+        execute_mod._merge_with_retry(
+            "wcm_portfolio_site",
+            "wcmchenry3-stack",
+            173,
+            "merge",
+            config={"timeouts": CONFIG["timeouts"]},
+            dry_run=False,
+        )
+    assert flaky.calls == 1  # GitHub already decided — no point retrying a real conflict
+
+
+def test_merge_retry_gives_up_after_its_configured_budget(monkeypatch):
+    flaky = _FlakyMerge(fail_times=99)  # never settles within the retry budget
+    monkeypatch.setattr(execute_mod.gh, "merge", flaky.merge)
+    monkeypatch.setattr(execute_mod.gh, "pr_mergeable", flaky.pr_mergeable)
+    monkeypatch.setattr(execute_mod.time, "sleep", lambda _seconds: None)
+
+    config = {**CONFIG["timeouts"], "merge_retry_attempts": 2, "merge_retry_wait": 0}
+    with pytest.raises(execute_mod.gh.GhError):
+        execute_mod._merge_with_retry(
+            "wcm_portfolio_site",
+            "wcmchenry3-stack",
+            173,
+            "merge",
+            config={"timeouts": config},
+            dry_run=False,
+        )
+    assert flaky.calls == 3  # the initial attempt plus 2 retries, then give up
+
+
+def test_settled_merge_failure_becomes_a_skip_decision_not_a_crash(monkeypatch):
+    """A real conflict must never abort the run — every other decision still gets reported."""
+
+    def fail_merge(repo, owner, number, method, *, dry_run=False):
+        raise execute_mod.gh.GhError(
+            f"gh pr merge {number} --repo {owner}/{repo} --{method} --delete-branch "
+            f"failed (1): X Pull request {owner}/{repo}#{number} is not mergeable: "
+            "the merge commit cannot be cleanly created."
+        )
+
+    monkeypatch.setattr(execute_mod.gh, "merge", fail_merge)
+    monkeypatch.setattr(execute_mod.gh, "pr_mergeable", lambda *a, **k: ("CONFLICTING", "DIRTY"))
+    monkeypatch.setattr(execute_mod.gh, "required_contexts", lambda *a, **k: REQUIRED)
+    monkeypatch.setattr(execute_mod, "_refresh", lambda pr, harvest, owner: pr)
+
+    pr = make_pr()
+    result = execute_mod.execute(
+        [_harvest([pr])], {pr.slug: _low(pr)}, FakeClient(), CONFIG, dry_run=False
+    )
+
+    assert result.total_merges == 0
+    assert result.decisions[0].action is Action.SKIP
+    assert "not mergeable" in result.decisions[0].reason
+
+
+def test_a_late_failure_still_leaves_prior_decisions_on_the_shared_result(monkeypatch):
+    """Incident 2026-08-31: execute() raising mid-run silently emptied the report.
+
+    __main__.py now passes in the ExecutionResult it will read afterwards, so
+    even when execute() raises, whatever was decided before the failure is
+    still there — the caller's variable and execute()'s are the same object.
+    """
+    prs = [make_pr(number=1), make_pr(number=2)]
+
+    def flaky_comment(repo, owner, number, body, *, dry_run=False):
+        if number == 2:
+            raise execute_mod.gh.GhError("transient failure posting the second comment")
+
+    monkeypatch.setattr(execute_mod.gh, "comment", flaky_comment)
+
+    shared = execute_mod.ExecutionResult()
+    with pytest.raises(execute_mod.gh.GhError):
+        execute_mod.execute(
+            [_harvest(prs)],
+            {p.slug: _low(p) for p in prs},
+            FakeClient(),
+            CONFIG,
+            dry_run=True,
+            result=shared,
+        )
+
+    # Both PRs were already decided (and dry-run "merged") before the comment
+    # loop hit the failure — none of that is lost just because execute() raised.
+    assert shared.total_merges == 2
+    assert len(shared.decisions) == 2
