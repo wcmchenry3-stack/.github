@@ -242,6 +242,82 @@ def test_package_drift_after_rebase_downgrades_to_review():
 
 
 # ---------------------------------------------------------------------------
+# Remediate: asking Dependabot to recreate a red-but-recoverable PR
+# ---------------------------------------------------------------------------
+
+
+def test_recoverable_check_failure_gets_a_recreate_not_an_immediate_skip(monkeypatch):
+    """BookshelfAI#437: npm ci died on a lockfile desync before lint even ran.
+
+    The only failing precondition is G06 (a required check red), and that
+    check's own link names the run that failed — so with remediate enabled and
+    a log that matches a recoverable signature, the PR should get a
+    `@dependabot recreate` rather than being left for review outright.
+    """
+    checks = green_checks()[:-1] + [
+        CheckRun(
+            name=sorted(REQUIRED)[-1],
+            conclusion="FAILURE",
+            details_url="https://github.com/acme/widget/actions/runs/777/job/1",
+        )
+    ]
+    pr = make_pr(checks=checks)
+    config = {
+        **CONFIG,
+        "remediate": {"enabled": True, "max_recreates_per_run": 4},
+        "timeouts": {**CONFIG["timeouts"], "rebase_wait": 0},
+    }
+
+    monkeypatch.setattr(execute_mod.gh, "pr_commit_authors", lambda *a, **k: [])
+    monkeypatch.setattr(
+        diagnose_mod.gh,
+        "_run",
+        lambda args, timeout=120: "npm error code EUSAGE\nMissing: x from lock file\n",
+    )
+    monkeypatch.setattr(execute_mod, "_refresh", lambda pr, harvest, owner: pr)
+
+    result = execute_mod.execute(
+        [_harvest([pr])], {pr.slug: _low(pr)}, FakeClient(), config, dry_run=False
+    )
+
+    assert (
+        "request_rebase",
+        pr.repo,
+        pr.number,
+        {"recreate": True, "dry_run": False},
+    ) in execute_mod.gh._calls
+    assert result.decisions[0].reason != "Automated merge refused by a precondition check."
+
+
+def test_unrecoverable_check_failure_still_skips_immediately(monkeypatch):
+    """A real test failure must not burn a recreate — a rebuild cannot fix it."""
+    checks = green_checks()[:-1] + [
+        CheckRun(
+            name=sorted(REQUIRED)[-1],
+            conclusion="FAILURE",
+            details_url="https://github.com/acme/widget/actions/runs/778/job/1",
+        )
+    ]
+    pr = make_pr(checks=checks)
+    config = {**CONFIG, "remediate": {"enabled": True, "max_recreates_per_run": 4}}
+
+    monkeypatch.setattr(execute_mod.gh, "pr_commit_authors", lambda *a, **k: [])
+    monkeypatch.setattr(
+        diagnose_mod.gh,
+        "_run",
+        lambda args, timeout=120: "1 test failed\nAssertionError: expected 2 got 3\n",
+    )
+
+    result = execute_mod.execute(
+        [_harvest([pr])], {pr.slug: _low(pr)}, FakeClient(), config, dry_run=False
+    )
+
+    assert not any(call[0] == "request_rebase" for call in execute_mod.gh._calls)
+    assert result.decisions[0].action is Action.SKIP
+    assert result.decisions[0].reason == "Automated merge refused by a precondition check."
+
+
+# ---------------------------------------------------------------------------
 # Caps and ordering
 # ---------------------------------------------------------------------------
 

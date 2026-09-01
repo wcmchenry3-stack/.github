@@ -67,6 +67,13 @@ class CheckRun:
     name: str
     conclusion: str  # SUCCESS | FAILURE | SKIPPED | NEUTRAL | CANCELLED | ""
     status: str = "COMPLETED"  # QUEUED | IN_PROGRESS | COMPLETED
+    # `gh pr checks --json link`'s URL for this check, e.g.
+    # https://github.com/OWNER/REPO/actions/runs/123/job/456. Names the exact
+    # workflow run this check ran in, which diagnose.fetch_log_tail uses to fetch
+    # its log directly rather than guessing at "the most recent run for this
+    # branch" — a guess that silently misfires whenever a push triggers more than
+    # one workflow. Empty for a synthetic MISSING check or an older harvest.
+    details_url: str = ""
 
     @property
     def is_success(self) -> bool:

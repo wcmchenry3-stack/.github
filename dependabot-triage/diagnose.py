@@ -13,35 +13,44 @@ from pathlib import Path
 
 import gh
 from llm import Client
-from models import PullRequest
+from models import CheckRun, PullRequest
 
 log = logging.getLogger(__name__)
 
 DIAGNOSE_PROMPT = (Path(__file__).parent / "prompts" / "diagnose.md").read_text(encoding="utf-8")
 
 CONFIDENCE_RE = re.compile(r"CONFIDENCE:\s*(HIGH|MEDIUM|LOW)", re.IGNORECASE)
+RUN_ID_RE = re.compile(r"/actions/runs/(\d+)")
 LOG_TAIL_LINES = 120
 
 
-def _failed_check_names(pr: PullRequest, required: frozenset[str]) -> list[str]:
-    return [c.name for c in pr.failing_required(required)]
+def _run_id_from_checks(checks: list[CheckRun]) -> str:
+    """Pull a workflow-run ID directly out of a failing check's own URL.
 
-
-def fetch_log_tail(repo: str, owner: str, number: int, head_ref: str = "") -> str:
-    """Last lines of the failing job's log for *this* PR.
-
-    Previously this listed the repository's most recent workflow run, which is
-    frequently a different branch entirely — so a diagnosis could confidently
-    describe someone else's failure. The run list is now filtered to the PR's
-    own head branch.
-
-    Best-effort: the log endpoint is noisy and occasionally unavailable, and a
-    missing log is a normal outcome rather than a reason to fail the run.
+    A push commonly triggers several independent workflow files at once (lint,
+    security scans, policy checks, ...), each becoming its own run. "The most
+    recent run for this branch" is then a guess that lands on whichever of those
+    finished last — as likely to be an unrelated green run as the one that
+    actually failed, and ``--log-failed`` against a green run silently returns
+    nothing. The check's own ``link`` field names its run unambiguously, so it
+    is always preferred when present.
     """
-    args = ["run", "list", "--repo", f"{owner}/{repo}", "--limit", "1", "--json", "databaseId"]
-    if head_ref:
-        args += ["--branch", head_ref]
-    else:
+    for check in checks:
+        match = RUN_ID_RE.search(check.details_url)
+        if match:
+            return match.group(1)
+    return ""
+
+
+def _latest_run_id_for_branch(repo: str, owner: str, number: int, head_ref: str) -> str:
+    """Fallback: the most recent workflow run on the PR's head branch.
+
+    Only reached when no failing check carries a usable ``link`` (an older
+    harvest, or a check type `gh` doesn't expose one for). This is a guess, not
+    a lookup — see ``_run_id_from_checks`` — which is why it is the fallback and
+    not the primary path.
+    """
+    if not head_ref:
         log.warning(
             "no head ref for %s#%s; skipping log fetch rather than "
             "risk reading an unrelated run",
@@ -49,6 +58,18 @@ def fetch_log_tail(repo: str, owner: str, number: int, head_ref: str = "") -> st
             number,
         )
         return ""
+    args = [
+        "run",
+        "list",
+        "--repo",
+        f"{owner}/{repo}",
+        "--limit",
+        "1",
+        "--branch",
+        head_ref,
+        "--json",
+        "databaseId",
+    ]
     try:
         raw = gh._run(args)
     except gh.GhError as exc:
@@ -57,18 +78,29 @@ def fetch_log_tail(repo: str, owner: str, number: int, head_ref: str = "") -> st
     import json
 
     runs = json.loads(raw) if raw.strip() else []
-    if not runs:
+    return str(runs[0]["databaseId"]) if runs else ""
+
+
+def fetch_log_tail(
+    repo: str,
+    owner: str,
+    number: int,
+    head_ref: str = "",
+    failing_checks: list[CheckRun] | None = None,
+) -> str:
+    """Last lines of the failing job's log for *this* PR.
+
+    Best-effort: the log endpoint is noisy and occasionally unavailable, and a
+    missing log is a normal outcome rather than a reason to fail the run.
+    """
+    run_id = _run_id_from_checks(failing_checks or [])
+    if not run_id:
+        run_id = _latest_run_id_for_branch(repo, owner, number, head_ref)
+    if not run_id:
         return ""
     try:
         logs = gh._run(
-            [
-                "run",
-                "view",
-                str(runs[0]["databaseId"]),
-                "--repo",
-                f"{owner}/{repo}",
-                "--log-failed",
-            ],
+            ["run", "view", run_id, "--repo", f"{owner}/{repo}", "--log-failed"],
             timeout=180,
         )
     except gh.GhError as exc:
@@ -86,11 +118,16 @@ def diagnose(
     dry_run: bool = True,
 ) -> str:
     """Return a short diagnosis of the PR's failing checks."""
-    failing = _failed_check_names(pr, required)
-    if not failing:
+    failing_checks = pr.failing_required(required)
+    if not failing_checks:
         return ""
+    failing = [c.name for c in failing_checks]
 
-    log_tail = "" if dry_run else fetch_log_tail(pr.repo, config["owner"], pr.number, pr.head_ref)
+    log_tail = (
+        ""
+        if dry_run
+        else fetch_log_tail(pr.repo, config["owner"], pr.number, pr.head_ref, failing_checks)
+    )
 
     prompt = "\n".join(
         [
