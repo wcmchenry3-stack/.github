@@ -245,7 +245,13 @@ def execute(
                     log_text = (
                         ""
                         if dry_run
-                        else diagnose_mod.fetch_log_tail(pr.repo, owner, pr.number, pr.head_ref)
+                        else diagnose_mod.fetch_log_tail(
+                            pr.repo,
+                            owner,
+                            pr.number,
+                            pr.head_ref,
+                            pr.failing_required(harvest.baseline.required_contexts),
+                        )
                     )
                     authors = [] if dry_run else gh.pr_commit_authors(pr.repo, owner, pr.number)
                     ok, why = remediate.should_recreate(

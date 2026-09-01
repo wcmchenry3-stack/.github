@@ -134,6 +134,10 @@ def pr_checks(repo: str, owner: str, number: int) -> list[dict[str, Any]]:
 
     ``gh pr checks`` exits non-zero when any check is failing, which is a normal
     outcome here rather than an error, so the raw result is tolerated.
+
+    ``link`` is requested alongside the fields already in use so callers can
+    trace a failing check straight back to the workflow run it happened in —
+    see ``CheckRun.details_url``.
     """
     try:
         raw = _run(
@@ -144,7 +148,7 @@ def pr_checks(repo: str, owner: str, number: int) -> list[dict[str, Any]]:
                 "--repo",
                 f"{owner}/{repo}",
                 "--json",
-                "name,state,bucket",
+                "name,state,bucket,link",
             ]
         )
     except GhError as exc:

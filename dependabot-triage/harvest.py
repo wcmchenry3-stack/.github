@@ -173,7 +173,14 @@ def harvest_repo(
         checks = []
         for entry in gh.pr_checks(repo, owner, number):
             conclusion, status = _bucket_to_conclusion(entry)
-            checks.append(CheckRun(name=entry["name"], conclusion=conclusion, status=status))
+            checks.append(
+                CheckRun(
+                    name=entry["name"],
+                    conclusion=conclusion,
+                    status=status,
+                    details_url=entry.get("link") or "",
+                )
+            )
 
         prs.append(
             PullRequest(
