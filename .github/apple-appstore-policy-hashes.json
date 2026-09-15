@@ -1,13 +1,13 @@
 {
-  "last_checked": "2026-06-15",
+  "last_checked": "2026-09-15",
   "pages": {
     "review-guidelines": {
       "url": "https://developer.apple.com/app-store/review/guidelines/",
-      "sha256": "10e2ea98cd3bfeecb0c22ef0a5677c8014ea195df065946a542b158f31bc2cbb"
+      "sha256": "8d63fff11c8a759a176c9d53e075d1927f4e424ab2e297d263242ceb0e5b7743"
     },
     "upcoming-requirements": {
       "url": "https://developer.apple.com/news/upcoming-requirements/",
-      "sha256": "10e2ea98cd3bfeecb0c22ef0a5677c8014ea195df065946a542b158f31bc2cbb"
+      "sha256": "8d63fff11c8a759a176c9d53e075d1927f4e424ab2e297d263242ceb0e5b7743"
     }
   }
 }
