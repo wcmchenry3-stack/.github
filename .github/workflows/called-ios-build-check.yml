@@ -19,6 +19,14 @@ on:
         description: 'Node.js version for npm ci'
         type: string
         default: '20'
+      min-deployment-target:
+        description: >-
+          Opt-in. When set (e.g. '15.0'), fail if any target in the generated
+          Pods project has IPHONEOS_DEPLOYMENT_TARGET below this version.
+          Xcode 27 hard-errors on targets below 15.0, but the runner's default
+          Xcode may be older, where it is only a warning and the build passes.
+        type: string
+        default: ''
     secrets:
       EXPO_PUBLIC_API_URL:
         required: false
@@ -57,6 +65,27 @@ jobs:
             fi
             sleep 10
           done
+
+      - name: Verify pod deployment targets
+        if: ${{ inputs.min-deployment-target != '' }}
+        env:
+          MIN_TARGET: ${{ inputs.min-deployment-target }}
+        run: |
+          below=$(
+            find ios/Pods -name project.pbxproj -print0 \
+              | xargs -0 grep -ho 'IPHONEOS_DEPLOYMENT_TARGET = [0-9][0-9.]*' \
+              | awk '{print $3}' | sort -u \
+              | while read -r v; do
+                  if [ "$v" != "$MIN_TARGET" ] && [ "$(printf '%s\n%s\n' "$v" "$MIN_TARGET" | sort -V | head -n1)" = "$v" ]; then
+                    echo "$v"
+                  fi
+                done
+          )
+          if [ -n "$below" ]; then
+            echo "::error::Pods project has IPHONEOS_DEPLOYMENT_TARGET below ${MIN_TARGET}: $(echo "$below" | tr '\n' ' ')"
+            exit 1
+          fi
+          echo "All pod IPHONEOS_DEPLOYMENT_TARGET values are >= ${MIN_TARGET}"
 
       - name: Xcode build (no signing, no simulator)
         run: |
