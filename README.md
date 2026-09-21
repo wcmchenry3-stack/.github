@@ -33,7 +33,7 @@ All workflows are prefixed `called-` and use `on: workflow_call`. Call them from
 | `called-cve-frontend.yml` | npm audit --audit-level=high |
 | `called-perf-frontend.yml` | Lighthouse CI — audits built dist, uploads results as artifacts |
 | `called-perf-backend.yml` | Locust load test against a live URL with threshold assertions |
-| `called-deploy-render.yml` | Render deploy hook + ZAP post-deploy scan |
+| `called-deploy-render.yml` | Render deploy hook (optionally pinned to a commit via `commit-id`) + ZAP post-deploy scan (report kept as an artifact; no GitHub issue is filed) |
 | `called-zap-scheduled.yml` | ZAP baseline scan (caller owns the schedule) |
 | `called-openai-policy.yml` | OpenAI API compliance check |
 | `called-gemini-policy.yml` | Google Gemini API compliance check |

@@ -15,6 +15,15 @@ on:
         description: 'Live URL to run ZAP baseline scan against after deploy'
         type: string
         required: true
+      commit-id:
+        description: >-
+          Full 40-character git SHA to deploy. When set, Render deploys exactly this
+          commit instead of the current HEAD of the service's branch - callers that
+          run CI first should pass github.sha, so a later push cannot ship before its
+          own CI has finished. Empty (default) keeps the old behaviour.
+        type: string
+        required: false
+        default: ''
     secrets:
       RENDER_API_KEY:
         required: true
@@ -28,19 +37,58 @@ jobs:
     steps:
       - name: Trigger Render deploy
         id: trigger
+        env:
+          COMMIT_ID: ${{ inputs.commit-id }}
         run: |
           service_id="${{ inputs.service-id || secrets.RENDER_SERVICE_ID }}"
+
+          # No commit-id: the request is exactly what it always was, and Render
+          # deploys the current HEAD of the service's branch. A commit-id pins it.
+          # It is validated as a bare SHA, so it is safe to place inside the JSON.
+          if [[ -n "$COMMIT_ID" && ! "$COMMIT_ID" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "commit-id must be a full 40-character lowercase git SHA (got ${#COMMIT_ID} characters)."
+            exit 1
+          fi
+          if [[ -n "$COMMIT_ID" ]]; then
+            payload="{\"clearCache\":\"do_not_clear\",\"commitId\":\"$COMMIT_ID\"}"
+            echo "Pinning deploy to commit $COMMIT_ID"
+          else
+            payload='{"clearCache":"do_not_clear"}'
+          fi
+
           response=$(curl -s -w "\n%{http_code}" -X POST \
             "https://api.render.com/v1/services/${service_id}/deploys" \
             -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
             -H "Content-Type: application/json" \
-            -d '{"clearCache":"do_not_clear"}')
+            -d "$payload")
           http_code=$(echo "$response" | tail -1)
           body=$(echo "$response" | head -1)
           echo "HTTP $http_code"
           echo "$body"
+
+          # Fail here, not ten minutes later in the polling step (which cannot
+          # poll a deploy that was never created, e.g. rejected key or bad SHA).
+          if [[ ! "$http_code" =~ ^2[0-9][0-9]$ ]]; then
+            echo "Render rejected the deploy request (HTTP $http_code)."
+            exit 1
+          fi
+
           deploy_id=$(echo "$body" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))")
           echo "deploy_id=$deploy_id" >> $GITHUB_OUTPUT
+
+          # A pin that did not take effect is worse than none: confirm Render is
+          # deploying the commit that was asked for.
+          if [[ -n "$COMMIT_ID" ]]; then
+            deployed=$(echo "$body" | python3 -c "import sys,json; print((json.load(sys.stdin).get('commit') or {}).get('id',''))")
+            if [[ -z "$deployed" ]]; then
+              echo "::warning::Render's response did not report which commit it is deploying, so the pin to $COMMIT_ID could not be confirmed."
+            elif [[ "$deployed" != "$COMMIT_ID" ]]; then
+              echo "::error::Requested commit $COMMIT_ID but Render is deploying $deployed."
+              exit 1
+            else
+              echo "Confirmed: Render is deploying $deployed."
+            fi
+          fi
 
       - name: Wait for deploy to complete
         run: |
@@ -71,4 +119,8 @@ jobs:
           target: ${{ inputs.zap-target-url }}
           # fail_action: false — ZAP findings reported as artifacts, do not roll back the deploy
           fail_action: false
+          # The action's default is to file the report as a GitHub issue, which needs
+          # issues: write (callers' default token is read-only) and would publish scan
+          # findings in public repos. The report is already uploaded as an artifact.
+          allow_issue_writing: false
           artifact_name: zap-post-deploy-${{ inputs.service-name }}-${{ github.run_id }}
