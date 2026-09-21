@@ -276,6 +276,16 @@ CocoaPods CDN (`cdn.cocoapods.org`) has transient timeouts. Both `called-ios-bui
 and `called-ios-e2e.yml` already wrap `pod install` in a 3-attempt retry loop with backoff.
 Any new iOS workflow must include the same pattern.
 
+### `called-ios-build-check.yml` `min-deployment-target` (opt-in)
+
+Set `min-deployment-target: '15.0'` in the caller to fail the job if any target in the
+generated `Pods` project has `IPHONEOS_DEPLOYMENT_TARGET` below that version. Xcode 27
+turned deployment targets below 15.0 (typically CocoaPods resource-bundle targets that
+inherit the podspec minimum) from a warning into a hard archive error. The runner's default
+Xcode may be older, so the build alone cannot catch it. Defaults to empty (check skipped), so
+existing callers are unaffected. `Podfile.lock` is deleted before `pod install` in this job, so
+the check exercises the Podfile's `post_install` rather than the committed lock.
+
 ### Test CI scripts against a clean environment first
 
 Lesson from gaming_app PRs #82–#86 — five consecutive PRs each fixing a side effect of the
