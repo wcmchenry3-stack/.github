@@ -12,11 +12,41 @@ on:
       working-directory:
         type: string
         default: '.'
+      shard-count:
+        description: >
+          Number of parallel jest shards. 1 (default) runs the original single
+          job unchanged. N > 1 splits the suite with `--shard=i/N`, merges the
+          per-shard coverage and enforces the threshold on the combined result.
+          Jest only; the repo's own coverageThreshold (package.json) is applied
+          to the merged report.
+        type: number
+        default: 1
 
 jobs:
-  test-frontend:
-    name: Test frontend (jest/vitest)
+  plan:
+    name: Plan shards
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
+    steps:
+      - id: m
+        env:
+          SHARD_COUNT: ${{ inputs.shard-count }}
+        run: |
+          n=$SHARD_COUNT; [ "$n" -ge 1 ] || n=1
+          echo "matrix=$(seq -s, 1 "$n" | sed 's/^/[/;s/$/]/')" >> "$GITHUB_OUTPUT"
+
+  # Runs the tests. With shard-count 1 this is the original behaviour (the repo's
+  # own test:ci script, threshold enforced in-run). With N > 1 it is a matrix of
+  # N jest shards that each write a raw coverage JSON and skip the threshold.
+  shard:
+    name: Jest shard ${{ matrix.shard }}/${{ inputs.shard-count }}
+    needs: plan
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v7
@@ -28,17 +58,89 @@ jobs:
         run: npm ci
         working-directory: ${{ inputs.working-directory }}
       - name: Run tests with coverage
-        # Uses npm run test:ci if defined, otherwise npm run test:run, otherwise falls back to jest/vitest directly.
+        # shard-count 1: uses npm run test:ci if defined, otherwise npm run test:run,
+        # otherwise falls back to jest directly (unchanged from the unsharded workflow).
         # Uses `npm run 2>/dev/null` (not --silent) because npm 7+ suppresses the script
         # list with --silent, causing all greps to fail and the workflow to fall through
         # to the jest fallback even on vitest projects.
-        # Each repo's package.json defines the test runner (jest or vitest) — this workflow is stack-agnostic.
+        # shard-count > 1: runs jest --shard with the threshold disabled; the merge job
+        # enforces it on the combined coverage.
+        env:
+          SHARD_COUNT: ${{ inputs.shard-count }}
+          SHARD_INDEX: ${{ matrix.shard }}
         run: |
-          if npm run 2>/dev/null | grep -q "test:ci"; then
+          if [ "$SHARD_COUNT" -gt 1 ]; then
+            npx jest --coverage --shard="$SHARD_INDEX/$SHARD_COUNT" \
+              --coverageThreshold='{}' \
+              --coverageReporters=json \
+              --coverageDirectory="coverage-shard-$SHARD_INDEX"
+          elif npm run 2>/dev/null | grep -q "test:ci"; then
             npm run test:ci
           elif npm run 2>/dev/null | grep -q "test:run"; then
             npm run test:run -- --coverage
           else
             npx jest --coverage --coverageThreshold='{"global":{"lines":${{ inputs.coverage-threshold }}}}'
           fi
+        working-directory: ${{ inputs.working-directory }}
+      - name: Upload shard coverage
+        if: inputs.shard-count > 1
+        uses: actions/upload-artifact@v4
+        with:
+          name: jest-coverage-${{ matrix.shard }}
+          path: ${{ inputs.working-directory }}/coverage-shard-${{ matrix.shard }}/coverage-final.json
+          if-no-files-found: error
+          retention-days: 1
+
+  # Stable required-check context: `test-frontend / Test frontend (jest/vitest)`.
+  # Always runs, so branch protection keeps matching whatever shard-count is used.
+  test-frontend:
+    name: Test frontend (jest/vitest)
+    needs: [plan, shard]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any shard failed
+        if: needs.shard.result != 'success' || needs.plan.result != 'success'
+        run: |
+          echo "::error::Test shards finished with result: plan=${{ needs.plan.result }} shard=${{ needs.shard.result }}"
+          exit 1
+      - uses: actions/checkout@v6
+        if: inputs.shard-count > 1
+      - uses: actions/setup-node@v7
+        if: inputs.shard-count > 1
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+      - name: Install dependencies
+        if: inputs.shard-count > 1
+        run: npm ci
+        working-directory: ${{ inputs.working-directory }}
+      - name: Download shard coverage
+        if: inputs.shard-count > 1
+        uses: actions/download-artifact@v4
+        with:
+          pattern: jest-coverage-*
+          path: ${{ inputs.working-directory }}/coverage-shards
+      - name: Merge coverage and enforce threshold
+        if: inputs.shard-count > 1
+        # nyc merges the per-shard coverage-final.json files; the threshold is read from
+        # the repo's jest coverageThreshold (package.json / jest config), falling back to
+        # the coverage-threshold input (lines) when the repo defines none.
+        run: |
+          mkdir -p .nyc_output merged
+          i=0
+          for f in coverage-shards/*/coverage-final.json; do
+            i=$((i+1)); cp "$f" ".nyc_output/shard-$i.json"
+          done
+          THRESHOLD=$(node -e '
+            const p=require("./package.json"); const t=(p.jest&&p.jest.coverageThreshold&&p.jest.coverageThreshold.global)||{};
+            const o={lines:${{ inputs.coverage-threshold }},...t}; process.stdout.write(JSON.stringify(o));')
+          echo "Enforcing global thresholds: $THRESHOLD"
+          npx --yes nyc@17.1.0 report --reporter=text-summary --reporter=lcov --report-dir=merged
+          LINES=$(node -e 'const t=JSON.parse(process.argv[1]);console.log(t.lines??0)' "$THRESHOLD")
+          BRANCHES=$(node -e 'const t=JSON.parse(process.argv[1]);console.log(t.branches??0)' "$THRESHOLD")
+          FUNCS=$(node -e 'const t=JSON.parse(process.argv[1]);console.log(t.functions??0)' "$THRESHOLD")
+          STMTS=$(node -e 'const t=JSON.parse(process.argv[1]);console.log(t.statements??0)' "$THRESHOLD")
+          npx --yes nyc@17.1.0 check-coverage --lines "$LINES" --branches "$BRANCHES" --functions "$FUNCS" --statements "$STMTS"
         working-directory: ${{ inputs.working-directory }}
