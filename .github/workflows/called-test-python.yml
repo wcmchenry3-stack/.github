@@ -12,6 +12,14 @@ on:
       working-directory:
         type: string
         default: '.'
+      shard-count:
+        description: >
+          Number of parallel pytest shards. 1 (default) runs the original single
+          job unchanged. N > 1 splits the test files across N jobs (size-balanced,
+          no extra pytest plugin needed), combines the per-shard `.coverage`
+          data with `coverage combine` and enforces the threshold on the result.
+        type: number
+        default: 1
     secrets:
       DATABASE_URL:
         required: false
@@ -21,9 +29,27 @@ on:
         required: false
 
 jobs:
-  test-python:
-    name: Test Python (pytest)
+  plan:
+    name: Plan shards
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
+    steps:
+      - id: m
+        env:
+          SHARD_COUNT: ${{ inputs.shard-count }}
+        run: |
+          n=$SHARD_COUNT; [ "$n" -ge 1 ] || n=1
+          echo "matrix=$(seq -s, 1 "$n" | sed 's/^/[/;s/$/]/')" >> "$GITHUB_OUTPUT"
+
+  shard:
+    name: Pytest shard ${{ matrix.shard }}/${{ inputs.shard-count }}
+    needs: plan
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.matrix) }}
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       JWT_PRIVATE_KEY: ${{ secrets.JWT_PRIVATE_KEY }}
@@ -43,5 +69,79 @@ jobs:
           fi
         working-directory: ${{ inputs.working-directory }}
       - name: Run tests
-        run: pytest --cov=. --cov-fail-under=${{ inputs.coverage-threshold }} --tb=short
+        env:
+          SHARD_COUNT: ${{ inputs.shard-count }}
+          SHARD_INDEX: ${{ matrix.shard }}
+        run: |
+          if [ "$SHARD_COUNT" -le 1 ]; then
+            pytest --cov=. --cov-fail-under=${{ inputs.coverage-threshold }} --tb=short
+            exit $?
+          fi
+          # Greedy size-balanced split of test files (largest first onto the lightest
+          # shard). Deterministic, so every shard computes the same partition.
+          FILES=$(python - <<'PY'
+          import os, sys
+          n, i = int(os.environ["SHARD_COUNT"]), int(os.environ["SHARD_INDEX"])
+          files = []
+          for root, _, names in os.walk("tests"):
+              files += [os.path.join(root, f) for f in names if f.startswith("test_") and f.endswith(".py")]
+          files.sort(key=lambda f: (-os.path.getsize(f), f))
+          bins = [[0, []] for _ in range(n)]
+          for f in files:
+              b = min(bins, key=lambda b: b[0])
+              b[0] += os.path.getsize(f); b[1].append(f)
+          print(" ".join(sorted(bins[i - 1][1])))
+          PY
+          )
+          echo "Shard $SHARD_INDEX/$SHARD_COUNT files: $FILES"
+          [ -n "$FILES" ] || { echo "No files for this shard"; exit 0; }
+          # --cov-fail-under=0 overrides any addopts threshold; the merge job enforces it.
+          # --cov-report= silences per-shard term output; COVERAGE_FILE is unique per shard.
+          COVERAGE_FILE=".coverage.shard$SHARD_INDEX" pytest $FILES --cov=. --cov-report= --cov-fail-under=0 --tb=short
         working-directory: ${{ inputs.working-directory }}
+      - name: Upload shard coverage
+        if: inputs.shard-count > 1
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-coverage-${{ matrix.shard }}
+          path: ${{ inputs.working-directory }}/.coverage.shard*
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+
+  # Stable required-check context: `test-python / Test Python (pytest)`.
+  # Always runs, so branch protection keeps matching whatever shard-count is used.
+  test-python:
+    name: Test Python (pytest)
+    needs: [plan, shard]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any shard failed
+        if: needs.shard.result != 'success' || needs.plan.result != 'success'
+        run: |
+          echo "::error::Test shards finished with result: plan=${{ needs.plan.result }} shard=${{ needs.shard.result }}"
+          exit 1
+      - uses: actions/checkout@v6
+        if: inputs.shard-count > 1
+      - uses: actions/setup-python@v7
+        if: inputs.shard-count > 1
+        with:
+          python-version: ${{ inputs.python-version }}
+      - name: Download shard coverage
+        if: inputs.shard-count > 1
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pytest-coverage-*
+          path: shard-coverage
+          merge-multiple: true
+      - name: Combine coverage and enforce threshold
+        if: inputs.shard-count > 1
+        # Threshold: the repo's own [tool.coverage.report] fail_under / addopts value is
+        # not visible here, so the coverage-threshold input is authoritative when sharded.
+        run: |
+          pip install coverage
+          cd "${{ inputs.working-directory }}"
+          cp "${GITHUB_WORKSPACE}"/shard-coverage/.coverage.shard* .
+          coverage combine .coverage.shard*
+          coverage report --skip-covered --fail-under=${{ inputs.coverage-threshold }}

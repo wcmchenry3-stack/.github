@@ -177,6 +177,17 @@ wrangler kv namespace create RATE_LIMIT_KV --preview
 **Screenshots:** Stored as a private GitHub Gist (`screenshot.b64`); the issue body links to the Gist.
 **Session logs:** Appended as a collapsed `<details>` block in the issue body (truncated at 20 000 chars).
 
+## Test sharding (`called-test-frontend.yml`, `called-test-python.yml`)
+
+Both accept an opt-in `shard-count` input (default `1` = original single-run behaviour).
+With N > 1 a `plan` job builds the matrix, N `shard` jobs run (jest `--shard=i/N`;
+pytest size-balanced file split), per-shard coverage is uploaded, and the final job merges it
+(`nyc` for jest, `coverage combine` for pytest) and enforces the threshold on the combined result.
+The final job keeps the stable required-check names (`Test frontend (jest/vitest)`,
+`Test Python (pytest)`), so rulesets need no change. Callers opt in with `with: shard-count: N`.
+Sharded Python uses the `coverage-threshold` input (default 80) as the merged threshold — pass
+the repo's real value (BC-Arcade: 96). Jest merged thresholds come from `package.json`.
+
 ## Versioning
 
 All org repos use [Semantic Versioning](https://semver.org/) with automated
