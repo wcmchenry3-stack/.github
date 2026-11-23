@@ -130,7 +130,7 @@ jobs:
           python-version: ${{ inputs.python-version }}
       - name: Download shard coverage
         if: inputs.shard-count > 1
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: pytest-coverage-*
           path: shard-coverage
